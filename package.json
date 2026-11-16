@@ -1,0 +1,15 @@
+{
+  "name": "growblox-hansel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Script autofarm Growblox buat belajar, diadaptasi dari Claris Growblox Autofarm (Clarissv).",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && python3 tests/run.py"
+  },
+  "github": {
+    "user": "Hanselane",
+    "repo": "growblox-hansel",
+    "branch": "main"
+  }
+}
