@@ -1,5 +1,5 @@
--- Growblox Hansel v0.1.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.1.0"
+-- Growblox Hansel v0.1.1. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.1.1"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -906,7 +906,7 @@ end)()
 -- ===== src/ui.lua =====
 __modules["ui"] = (function(...)
 -- ui.lua: jendela WindUI. Pondasi baru bikin kerangka tab + tab Settings.
--- Isi tab fitur (PNB, Planting, Harvest, Auto Collect) ditambah bareng fiturnya.
+-- Isi tab fitur (Place & Break + Auto Collect, Planting, Harvest, Rotation) ditambah bareng fiturnya.
 return function(G)
     local App, task = G.App, G.task
     local UI = { tabs = {} }
@@ -936,7 +936,7 @@ return function(G)
 
     function UI.build(WindUI)
         local window = WindUI:CreateWindow({
-            Title = "Growblox Hansel", Author = "v" .. G.VERSION .. " | belajar dari Clarissv",
+            Title = "Growblox Hansel", Author = "v" .. G.VERSION .. " | Learn to own",
             Folder = G.State.ROOT, Icon = "sprout", Size = G.UDim2.fromOffset(600, 520),
             OpenButton = { Title = "Growblox Hansel", Enabled = true, Draggable = true, OnlyMobile = false },
         })
@@ -944,13 +944,14 @@ return function(G)
         App.window = window
         window:OnDestroy(function() G.unload() end)
 
-        -- Urutan tab = urutan muncul di layar.
+        -- Urutan tab = urutan muncul di layar. Auto Collect ada di dalam tab Place & Break.
         UI.tabs.pnb = window:Tab({ Title = "Place & Break", Icon = "hammer" })
         UI.tabs.plant = window:Tab({ Title = "Planting", Icon = "sprout" })
         UI.tabs.harvest = window:Tab({ Title = "Harvest", Icon = "package" })
-        UI.tabs.collect = window:Tab({ Title = "Auto Collect", Icon = "package" })
+        UI.tabs.rotation = window:Tab({ Title = "Rotation", Icon = "repeat" })
         UI.tabs.settings = window:Tab({ Title = "Settings", Icon = "settings" })
-        for _, key in ipairs({ "pnb", "plant", "harvest", "collect" }) do
+        UI.tabs.pnb:Paragraph({ Title = "Belum dibuat", Desc = "Place & Break dan Auto Collect ditambah di tahap berikutnya." })
+        for _, key in ipairs({ "plant", "harvest", "rotation" }) do
             UI.tabs[key]:Paragraph({ Title = "Belum dibuat", Desc = "Fitur ini ditambah di tahap berikutnya." })
         end
 
