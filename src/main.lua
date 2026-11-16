@@ -4,6 +4,7 @@ return function(modules, VERSION)
     local HttpService = game:GetService("HttpService")
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local UserInputService = game:GetService("UserInputService")
     local Workspace = game:GetService("Workspace")
     local player = Players.LocalPlayer
     local env = getgenv and getgenv() or _G
@@ -15,6 +16,15 @@ return function(modules, VERSION)
     if previous then
         previous.alive = false
         previous.token = (previous.token or 0) + 1
+        -- Kembalikan kontrol karakter yang mungkin masih dipegang instance lama.
+        local hold = previous.controls
+        if hold then
+            if hold.table.dir == hold.dirOverride then hold.table.dir = hold.dir end
+            if hold.table.jumping == hold.jumpOverride then hold.table.jumping = hold.jumping end
+            if hold.world.displayTake == hold.displayOverride then hold.world.displayTake = hold.displayTake end
+            if hold.world.takeDrop == hold.takeOverride then hold.world.takeDrop = hold.takeDrop end
+            previous.controls = nil
+        end
         if previous.window then pcall(function() previous.window:Destroy() end) end
     end
 
@@ -52,6 +62,9 @@ return function(modules, VERSION)
     G.isInstance = function(v) return type(typeof) == "function" and typeof(v) == "Instance" end
     G.frozen = function() return player:GetAttribute("Frozen") == true end
     G.accountOk = function() return player.UserId == ACCOUNT_ID end
+    G.focusedTextBox = function() return UserInputService:GetFocusedTextBox() end
+    G.env = env
+    G.queueOnTeleport = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
 
     local WindUI
     function G.setStatus(text)
@@ -65,14 +78,20 @@ return function(modules, VERSION)
     end
 
     -- 4) Rangkai modul. Urutannya mengikuti siapa butuh siapa.
+    G.resumeHandlers = {} -- fitur yang bisa di-resume mendaftar di sini
+    G.onConnected = {}    -- dipanggil setiap kali berhasil tersambung (misal isi ulang pilihan seed)
     G.Core = modules.core
+    G.Navigation = modules.navigation
     G.Net = modules.net(G)
     G.State = modules.state(G)
     G.Bridge = modules.bridge(G)
     G.Actions = modules.actions(G)
+    G.Movement = modules.movement(G)
+    G.Storage = modules.storage(G)
+    G.Jobs = modules.jobs(G)
     G.UI = modules.ui(G)
+    G.Plant = modules.plant(G)
     App.config = G.Core.defaults()
-    G.resumeHandlers = {} -- fitur yang bisa di-resume mendaftar di sini (dipakai tahap berikutnya)
 
     function G.connect()
         G.setStatus("Menyambung ke game...")
@@ -81,6 +100,7 @@ return function(modules, VERSION)
         end })
         G.setStatus(r.ready and ("Tersambung ke " .. r.world.name .. ".")
             or ("Tersambung ke " .. r.world.name .. ", tapi ada hook yang hilang. Cek diagnostics."))
+        for _, handler in ipairs(G.onConnected) do pcall(handler, r) end
         return r
     end
 
@@ -95,6 +115,9 @@ return function(modules, VERSION)
             "Tahap startup: " .. App.startupStage,
             "Loader: " .. tostring(env.GrowbloxHanselLoaderDebug or "lokal / tidak diketahui"),
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
+            "Navigasi: " .. tostring(App.navigationDebug or "-"),
+            "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
+            "Seed ditanam sesi ini: " .. App.stats.planted,
         }
         for _, line in ipairs(App.discoveryReport) do table.insert(lines, line) end
         table.insert(lines, "Log:")
@@ -104,6 +127,8 @@ return function(modules, VERSION)
 
     function G.unload()
         if not App.alive then return end
+        if App.job then pcall(G.Jobs.stop) end
+        pcall(G.Movement.releaseControls)
         App.alive = false
         App.token = App.token + 1
         if env.GrowbloxHanselApp == App then env.GrowbloxHanselApp = nil end

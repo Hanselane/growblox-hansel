@@ -17,6 +17,7 @@ local services = {
     Players = { LocalPlayer = { UserId = 123, GetAttribute = function() return nil end } },
     ReplicatedStorage = { GetAttribute = function() return "key" end },
     Workspace = { GetServerTimeNow = function() return 1000 end },
+    UserInputService = { GetFocusedTextBox = function() return nil end },
 }
 game = {
     GetService = function(_, name) return services[name] end,

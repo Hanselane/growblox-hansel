@@ -21,6 +21,30 @@ return function(G)
         local r = Bridge.runtime()
         local name = r.world.name
         local timeout = App.config.options.actionTimeout
+        -- Kalau script sedang pegang kontrol, tunggu pickup bawaan game yang masih jalan selesai
+        -- dulu, dan tahan pickup baru selama sinkron, biar snapshot server tidak ketinggalan item.
+        local hold = App.controls
+        if hold then
+            hold.syncing = true
+            local deadline = os.clock() + timeout
+            while true do
+                if token then Net.checkpoint(token) end
+                local taking = hold.autoTakes > 0
+                for _, drop in pairs(r.world.dropList()) do
+                    if drop.taking then taking = true end
+                end
+                if not taking then break end
+                assert(os.clock() < deadline, "Menunggu pickup yang sedang jalan: timeout.")
+                Net.pause(0.05, token)
+            end
+        end
+        local ok, result = pcall(Actions.syncInventory, r, name, timeout, token)
+        if hold then hold.syncing = false end
+        if not ok then error(result, 0) end
+        return result
+    end
+
+    function Actions.syncInventory(r, name, timeout, token)
         local snapshot
         for attempt = 1, 3 do
             if token then Bridge.worldCheck(name, token) end

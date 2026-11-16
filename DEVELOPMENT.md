@@ -6,14 +6,19 @@ Catatan teknis untuk mengubah dan merilis Growblox Hansel. Panduan pemakai ada d
 
 ```text
 src/
-  core.lua     logika murni: validasi config, nama world, seed. Tidak menyentuh game.
+  core.lua       logika murni: validasi config, nama world, seed, baris farm, syarat task.
+  navigation.lua perencana rute jalan/lompat (disalin utuh dari Clarissv).
   net.lua      token Stop, pause, request ke server dengan batas waktu.
   state.lua    simpan/baca file JSON per akun: session, profil, checkpoint resume.
   bridge.lua   SATU-SATUNYA modul yang mencari objek game di memori (getgc). Connect + retry.
   actions.lua  aksi dasar: hitung item, baca tile, sinkron tas dengan server.
+  movement.lua pegang kontrol karakter, jalan ke tile, masuk world, auto-resume setelah teleport.
+  storage.lua  Display Box: baca isi, ambil, setor, simpan posisi box.
+  jobs.lua     mulai/stop task. Fitur mendaftar lewat Jobs.register(mode, spec).
+  plant.lua    fitur Planting + isi tab Planting.
   ui.lua       jendela WindUI dan tab.
   main.lua     titik masuk: merangkai semua modul.
-tests/         tes offline (Lua 5.4 lewat Python lupa) dengan game palsu.
+tests/         tes offline (Lua 5.4 lewat Python lupa) dengan game palsu. tests/plant.lua punya simulasi fisika jalan.
 build.mjs      gabungkan src/, buat releases/<hash>/ dan loader.lua.
 loader.template.lua  template loader. loader.lua dibuat dari sini; jangan edit loader.lua.
 loader-local.lua     loader dari file lokal, untuk tes tanpa GitHub.

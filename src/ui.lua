@@ -2,7 +2,10 @@
 -- Isi tab fitur (Place & Break + Auto Collect, Planting, Harvest, Rotation) ditambah bareng fiturnya.
 return function(G)
     local App, task = G.App, G.task
-    local UI = { tabs = {} }
+    local UI = { tabs = {}, statuses = {} }
+
+    -- Paragraf "Status" di tiap tab, diupdate bareng oleh UI.refresh().
+    function UI.addStatus(paragraph) table.insert(UI.statuses, paragraph); return paragraph end
 
     -- Bungkus aksi tombol: jalan di thread sendiri, cek sedang tidak ada task,
     -- dan kalau error tampilkan pesannya, bukan bikin script crash.
@@ -44,12 +47,15 @@ return function(G)
         UI.tabs.rotation = window:Tab({ Title = "Rotation", Icon = "repeat" })
         UI.tabs.settings = window:Tab({ Title = "Settings", Icon = "settings" })
         UI.tabs.pnb:Paragraph({ Title = "Belum dibuat", Desc = "Place & Break dan Auto Collect ditambah di tahap berikutnya." })
-        for _, key in ipairs({ "plant", "harvest", "rotation" }) do
+        G.Plant.buildTab(UI.tabs.plant)
+        for _, key in ipairs({ "harvest", "rotation" }) do
             UI.tabs[key]:Paragraph({ Title = "Belum dibuat", Desc = "Fitur ini ditambah di tahap berikutnya." })
         end
 
         local s = UI.tabs.settings
-        UI.status = s:Paragraph({ Title = "Status", Desc = App.status })
+        UI.status = UI.addStatus(s:Paragraph({ Title = "Status", Desc = App.status }))
+        s:Button({ Title = "Stop task", Desc = "Hentikan task yang lagi jalan. Checkpoint resume ikut dihapus.",
+            Callback = function() G.Jobs.stop() end })
         s:Button({ Title = "Reconnect to game", Desc = "Pakai ini kalau muncul 'found 0'. Masuk world dulu, baru pencet.",
             Callback = UI.action(function() G.connect() end) })
         s:Button({ Title = "Copy diagnostics", Callback = function()
@@ -64,7 +70,8 @@ return function(G)
 
     -- Dipanggil berkala dari main.lua.
     function UI.refresh()
-        UI.paragraph(UI.status, "Status", App.status)
+        for _, paragraph in ipairs(UI.statuses) do UI.paragraph(paragraph, "Status", App.status) end
+        G.Jobs.syncToggles()
         UI.paragraph(UI.log, "Aktivitas terakhir", table.concat(App.logs, "\n", 1, math.min(#App.logs, 8)))
     end
 

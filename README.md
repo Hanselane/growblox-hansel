@@ -1,8 +1,8 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.1.1**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.2.0**. *Learn to own.*
 
-Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi **pondasi**: menyambung ke game, menyimpan setting per akun, dan jendela dengan tab fitur. Fitur farming ditambah satu per satu (lihat [Status fitur](#status-fitur)).
+Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) dan fitur **Planting**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
 Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama pohon tumbuh → panen farm yang matang → pindahkan blok dan seed → tanam ulang → ulangi**.
 
@@ -12,6 +12,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Requirements](#requirements)
 - [Mulai](#mulai)
 - [Tab di jendela](#tab-di-jendela)
+- [Planting](#planting)
 - [Menyambung ke game](#menyambung-ke-game)
 - [Data yang disimpan](#data-yang-disimpan)
 - [Troubleshooting](#troubleshooting)
@@ -25,7 +26,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | --- | --- | --- |
 | Pondasi: connect, retry, simpan setting, loader GitHub | Settings | Selesai, dites di game (v0.1.0) |
 | Place & Break + Auto Collect | Place & Break | Belum |
-| Planting | Planting | Belum |
+| Planting | Planting | Selesai (v0.2.0), dites offline |
 | Harvest | Harvest | Belum |
 | Rotation | Rotation | Belum |
 
@@ -53,10 +54,60 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 | Tab | Isi |
 | --- | --- |
 | **Place & Break** | PNB dan **Auto Collect** (ambil drop di sekitar karakter, dengan jangkauan yang bisa diatur). Belum dibuat. |
-| **Planting** | Tanam seed di daftar world farm. Belum dibuat. |
+| **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | Panen farm dan simpan hasilnya ke Display Box. Belum dibuat. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
-| **Settings** | Status, **Reconnect to game**, **Copy diagnostics**, **Unload script**, dan log aktivitas. |
+| **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, **Unload script**, dan log aktivitas. |
+
+## Planting
+
+Planting mengisi tanah kosong di setiap world farm dengan seed, berurutan sesuai daftar world. Logikanya sama dengan Planting di Claris Growblox v0.1.43.
+
+### Requirements
+
+- Satu **world storage** berisi Display Box yang **hanya berisi seed** yang mau ditanam.
+- Satu atau lebih **world farm** yang bisa dimasuki langsung pakai nama. World storage tidak boleh ada di daftar farm.
+- Baris tanam: tile kosong dengan **tanah padat atau platform tepat di bawahnya**. Baris harus bisa dicapai dengan jalan atau lompat dari pintu masuk world.
+- Izin edit di area farm (world lock / area lock). Tile tanpa izin dilewati.
+- Tas punya tempat untuk seed.
+
+### Setup
+
+1. Masuk ke **world storage** dan berdiri di sebelah Display Box seed.
+2. Buka tab **Planting**, tekan **Save seed Display Box**. World storage dan jenis seed ikut terisi otomatis dari isi box.
+3. Kalau box masih kosong, pilih seed di **Seed to plant**. Pakai **Find seed by name or ID** kalau seed-nya tidak muncul.
+4. Isi **Dirt farm worlds (in order)**, dipisah koma:
+
+   ```text
+   FARM1, FARM2, FARM3
+   ```
+
+5. Nyalakan **Plant seeds**.
+
+### Cara kerja
+
+1. Script masuk ke farm pertama dan mendeteksi baris tanam. Kalau ada dua baris atau lebih yang lebarnya minimal 3 tile, baris pendek (box, batu pijakan) diabaikan.
+2. Menanam mulai dari baris paling atas, **zigzag**: baris ke-1 kiri ke kanan, baris ke-2 kanan ke kiri, dan seterusnya.
+3. Seed ditanam **sambil jalan**, maksimal 8 seed per batch. Setiap batch dicek ke server: jumlah seed di tas harus berkurang sesuai tile yang benar-benar tertanam.
+4. Tile yang ditolak atau tidak terkonfirmasi tidak menghentikan task. Tile itu ditunda dan dicoba **sekali lagi dari baris di bawahnya**. Kalau masih gagal, tile dilewati dan dicatat.
+5. Seed di tas habis: script ke world storage, ambil seed dari box, lalu kembali ke farm dan baris yang sama.
+6. Farm selesai: lanjut ke world berikutnya. Semua farm selesai: task berhenti dengan status `Finished planting all configured farms.`
+7. Box seed kosong: task berhenti dengan status `Planting stopped: the seed storage box is empty.` dan menyebut farm yang belum selesai.
+
+| Status / tile | Artinya |
+| --- | --- |
+| `Processed FARM1: N tiles skipped due to access or route.` | Farm selesai; N tile dilewati karena tidak terjangkau atau tidak ada izin |
+| `Retrying planting at X, Y from below...` | Mencoba ulang tile tertunda dari baris di bawahnya |
+| `Trying another route around the obstacle...` | Rute jalan gagal, script merencanakan rute lain (maks 4 kali) |
+| `skipped N unconfirmed tiles near X, Y` | Server tidak mengonfirmasi N seed; tile ditunda, task lanjut |
+
+### Pindah server dan resume
+
+Sebelum masuk world, progress disimpan: world ke berapa, baris terakhir, tile yang dilewati, dan batch seed yang belum terkonfirmasi. Kalau masuk world membuat pindah server, script dijalankan lagi otomatis dan **Planting lanjut sendiri** (butuh executor yang punya `queue_on_teleport`).
+
+Kalau tidak lanjut otomatis, jalankan loader lagi lalu tekan **Resume planting**. Checkpoint berlaku 6 jam.
+
+Kalau task berhenti saat **mengambil seed dari box**, script menolak resume karena tidak tahu apakah seed sudah masuk tas. Cek tas dan box, lalu tekan **Clear saved planting** dan mulai lagi.
 
 ## Menyambung ke game
 
@@ -88,6 +139,10 @@ Setiap file ditulis dengan aman: ditulis ke `.pending` dulu dan dicek, versi lam
 | `Stop task yang lagi jalan dulu` saat execute | Masih ada task aktif dari script sebelumnya | Matikan task dulu, tunggu sebentar, baru execute ulang |
 | `File ... tidak cocok` | Download terpotong, atau GitHub belum selesai memperbarui file | Tunggu 1–5 menit, lalu execute ulang |
 | Executor bilang ada execution yang masih berjalan | Execute dua kali terlalu cepat | Tunggu sampai jendela muncul |
+| `The saved Display Box must be in the entered storage world` | World storage beda dengan world tempat box disimpan | Simpan ulang box dengan **Save seed Display Box** |
+| `This storage box contains a different item` | Box seed berisi item lain | Pakai box yang khusus berisi satu jenis seed |
+| `Could not reach the saved position` | Rute ke baris/box terhalang | Buka jalan, tambah pijakan, atau pindahkan box |
+| `A seed storage withdrawal was interrupted` | Task berhenti saat mengambil seed | Cek tas dan box, **Clear saved planting**, mulai lagi |
 
 **Copy diagnostics** menyalin versi, world, status, hasil pencarian objek game, dan 15 baris log terakhir. Kirim teks itu saat melaporkan masalah.
 
