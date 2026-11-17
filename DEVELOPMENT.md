@@ -15,7 +15,9 @@ src/
   movement.lua pegang kontrol karakter, jalan ke tile, masuk world, auto-resume setelah teleport.
   storage.lua  Display Box: baca isi, ambil, setor, simpan posisi box.
   jobs.lua     mulai/stop task. Fitur mendaftar lewat Jobs.register(mode, spec).
+  drops.lua    pungut drop dari lantai (UID pickup, batch 8).
   plant.lua    fitur Planting + isi tab Planting.
+  pnb.lua      fitur Place & Break, panel grid 5x5, perekam aksi game.
   ui.lua       jendela WindUI dan tab.
   main.lua     titik masuk: merangkai semua modul.
 tests/         tes offline (Lua 5.4 lewat Python lupa) dengan game palsu. tests/plant.lua punya simulasi fisika jalan.

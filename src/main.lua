@@ -65,6 +65,11 @@ return function(modules, VERSION)
     G.focusedTextBox = function() return UserInputService:GetFocusedTextBox() end
     G.env = env
     G.queueOnTeleport = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
+    G.newInstance, G.Color3 = Instance and Instance.new, Color3
+    G.guiParent = function()
+        if type(gethui) == "function" then return gethui() end
+        return game:GetService("CoreGui")
+    end
 
     local WindUI
     function G.setStatus(text)
@@ -88,9 +93,11 @@ return function(modules, VERSION)
     G.Actions = modules.actions(G)
     G.Movement = modules.movement(G)
     G.Storage = modules.storage(G)
+    G.Drops = modules.drops(G)
     G.Jobs = modules.jobs(G)
     G.UI = modules.ui(G)
     G.Plant = modules.plant(G)
+    G.Pnb = modules.pnb(G)
     App.config = G.Core.defaults()
 
     function G.connect()
@@ -117,9 +124,15 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
-            "Seed ditanam sesi ini: " .. App.stats.planted,
+            "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
+            "PNB: blok " .. tostring(App.config.blockId) .. ", " .. #App.config.pnb.tiles .. " tile, auto stock "
+                .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop),
         }
         for _, line in ipairs(App.discoveryReport) do table.insert(lines, line) end
+        if App.recordReport then
+            table.insert(lines, "Rekaman aksi game:")
+            for _, line in ipairs(App.recordReport) do table.insert(lines, "  " .. line) end
+        end
         table.insert(lines, "Log:")
         for i = 1, math.min(#App.logs, 15) do table.insert(lines, App.logs[i]) end
         return table.concat(lines, "\n")

@@ -1,5 +1,5 @@
--- Growblox Hansel v0.2.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.2.3"
+-- Growblox Hansel v0.3.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.0"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -9,7 +9,9 @@ __modules["core"] = (function(...)
 local Core = {}
 
 Core.CONFIG_VERSION = 1
-Core.POINTS = { "pnb", "blockBox", "seedBox", "farmBox", "plantBox" }
+Core.POINTS = { "pnb", "blockBox", "seedBox", "farmBox", "plantBox", "stock", "seedDrop" }
+-- Titik yang berupa TEMPAT BERDIRI (bukan box), jadi tidak butuh standX/standY.
+Core.STAND_POINTS = { pnb = true, stock = true, seedDrop = true }
 Core.COLLECT_FILTERS = { "all", "gems", "crop" }
 
 -- Angka yang boleh diatur user: { minimum, maksimum, bawaan }.
@@ -37,7 +39,29 @@ function Core.defaults()
         version = Core.CONFIG_VERSION, blockId = 0, points = {}, options = options,
         planting = { seedId = 0, storageWorld = "", worlds = {} },
         harvesting = { method = "fist" },
+        -- PNB: tiles = kotak yang di-place & break, relatif ke posisi berdiri (dx kanan, dy bawah).
+        pnb = { tiles = { { dx = 0, dy = -1 } }, autoStock = false, autoDrop = false },
     }
+end
+
+-- Validasi daftar tile PNB: dalam kotak 5x5 (dx, dy -2..2), bukan kotak tengah, tanpa duplikat.
+function Core.validatePNBTiles(tiles)
+    assert(type(tiles) == "table", "Daftar tile PNB rusak.")
+    local out, seen = {}, {}
+    for index, tile in ipairs(tiles) do
+        assert(type(tile) == "table" and integer(tile.dx, -2, 2) and integer(tile.dy, -2, 2), "Tile PNB di luar kotak 5x5.")
+        assert(not (tile.dx == 0 and tile.dy == 0), "Kotak tengah adalah posisi karakter.")
+        local key = tile.dx .. ":" .. tile.dy
+        assert(not seen[key], "Tile PNB dobel: " .. key)
+        seen[key] = true
+        out[index] = { dx = tile.dx, dy = tile.dy }
+    end
+    return out
+end
+-- Urutan tile tetap (atas ke bawah, kiri ke kanan) supaya place/break selalu dengan urutan sama.
+function Core.sortPNBTiles(tiles)
+    table.sort(tiles, function(a, b) return a.dy < b.dy or a.dy == b.dy and a.dx < b.dx end)
+    return tiles
 end
 
 function Core.worldName(value)
@@ -101,7 +125,7 @@ function Core.validate(input)
             local copy = { world = Core.worldName(point.world) }
             assert(integer(point.x, 0, 65535) and integer(point.y, 0, 65535), "Tile tidak valid: " .. key)
             copy.x, copy.y = point.x, point.y
-            if key ~= "pnb" then -- box butuh posisi berdiri di depannya
+            if not Core.STAND_POINTS[key] then -- box butuh posisi berdiri di depannya
                 assert(integer(point.standX, 0, 65535) and integer(point.standY, 0, 65535),
                     "Posisi berdiri hilang: " .. key)
                 copy.standX, copy.standY = point.standX, point.standY
@@ -115,6 +139,17 @@ function Core.validate(input)
         assert(type(planting) == "table", "Bagian planting di profil rusak.")
         out.planting = Core.validatePlanting({ seedId = planting.seedId or 0,
             storageWorld = planting.storageWorld or "", worlds = planting.worlds or {} })
+    end
+
+    if input.pnb ~= nil then
+        assert(type(input.pnb) == "table", "Bagian pnb di profil rusak.")
+        if input.pnb.tiles ~= nil then out.pnb.tiles = Core.validatePNBTiles(input.pnb.tiles) end
+        for _, key in ipairs({ "autoStock", "autoDrop" }) do
+            if input.pnb[key] ~= nil then
+                assert(type(input.pnb[key]) == "boolean", "Setting PNB tidak valid: " .. key)
+                out.pnb[key] = input.pnb[key]
+            end
+        end
     end
 
     local harvesting = input.harvesting or {}
@@ -274,6 +309,19 @@ function Core.checkSetup(config, mode, items)
         assert(config.points.plantBox.world:upper() == p.storageWorld, "The saved seed Display Box must be in the entered storage world.")
         assert(#p.worlds > 0, "Enter at least one dirt farm world.")
         for _, name in ipairs(p.worlds) do assert(name ~= p.storageWorld, "Seed storage and dirt farm worlds must be different.") end
+        return true
+    end
+    if mode == "pnb" then
+        assert(config.blockId > 0 and Core.farmable(items[config.blockId]), "Pilih blok yang bisa di-PNB.")
+        assert(#config.pnb.tiles > 0, "Pilih minimal satu tile PNB.")
+        local spot = config.points.pnb
+        assert(spot, "Posisi PNB belum ada.")
+        for _, key in ipairs({ "stock", "seedDrop" }) do
+            local point = config.points[key]
+            assert(not point or point.world == spot.world, "Posisi " .. key .. " harus di world yang sama dengan PNB.")
+        end
+        if config.pnb.autoStock then assert(config.points.stock, "Set stock position dulu, atau matikan Auto take stock.") end
+        if config.pnb.autoDrop then assert(config.points.seedDrop, "Set seed drop position dulu, atau matikan Auto drop seed.") end
         return true
     end
     error("Unknown farming task: " .. tostring(mode))
@@ -1932,6 +1980,136 @@ end
 
 end)()
 
+-- ===== src/drops.lua =====
+__modules["drops"] = (function(...)
+-- drops.lua: pungut drop (blok, seed, gem) dari lantai lewat UID pickup.
+-- Diadaptasi dari Clarissv main.lua v0.1.43: takeDropBatch dan collectDrops.
+-- Bedanya: area pungut bisa diatur (radius), dan drop yang 3x ditolak server cuma dilewati,
+-- tidak menghentikan task (grid PNB 5x5 menjatuhkan drop lebih jauh dari grid 1 tile Clarissv).
+return function(G)
+    local App, Bridge, Net, Actions, Movement = G.App, G.Bridge, G.Net, G.Actions, G.Movement
+    local Drops = { GEM = 112 }
+    local worldCheck, position, pause = Bridge.worldCheck, Bridge.position, Net.pause
+
+    -- Kirim maksimal 8 permintaan pickup sekaligus, lalu tunggu semua balasan.
+    -- Tiap drop "dipesan" dulu (drop.taking) supaya pickup bawaan game tidak mengambil yang sama.
+    function Drops.takeBatch(worldName, targets, attempts, retryAt, eligible, token)
+        local r = worldCheck(worldName, token)
+        local take = App.controls and App.controls.takeDrop or r.world.takeDrop
+        assert(type(take) == "function" and type(r.world.dropTaken) == "function",
+            "The loose-drop pickup hooks are unavailable. Copy diagnostics from Settings.")
+        local jobs, reserved = {}, {}
+        local deadline = os.clock() + App.config.options.actionTimeout
+        for _, drop in ipairs(targets) do
+            if #jobs >= 8 then break end
+            worldCheck(worldName, token)
+            local present = false
+            for _, current in pairs(r.world.dropList()) do if current == drop then present = true; break end end
+            local room = drop.id == Drops.GEM and 65535 or math.max(0, r.inventory:room(drop.id) - (reserved[drop.id] or 0))
+            local want = math.floor(math.min(drop.n, room, 65535))
+            if want > 0 and present and eligible(drop) then
+                local before, grid, uid, id = drop.n, r.world.fg, drop.uid, drop.id
+                if id ~= Drops.GEM then reserved[id] = (reserved[id] or 0) + want end
+                attempts[uid] = (attempts[uid] or 0) + 1
+                if App.controls then App.controls.suppressedTakes[uid] = nil end
+                drop.taking = true
+                local request = Net.beginRequest(function()
+                    local ok, result = pcall(function()
+                        local amount = take(uid, want)
+                        if amount == nil then amount = 0 end
+                        assert(type(amount) == "number" and amount >= 0 and amount <= want
+                            and amount == math.floor(amount), "Invalid pickup response from the server.")
+                        if amount > 0 and r.world.name == worldName and r.world.fg == grid then
+                            r.world.dropTaken(uid, math.min(drop.n, math.max(0, before - amount)))
+                            if id == Drops.GEM then App.stats.gems = App.stats.gems + amount end
+                        elseif amount == 0 then
+                            retryAt[uid], drop.refused = os.clock() + 1, os.clock()
+                        end
+                        return amount
+                    end)
+                    drop.taking = false
+                    assert(ok, tostring(result))
+                    return result
+                end)
+                table.insert(jobs, { request = request, uid = uid, id = id })
+            end
+        end
+        local results = {}
+        for _, job in ipairs(jobs) do
+            local amount = Net.awaitRequest(job.request, deadline, token)
+            if amount > 0 then attempts[job.uid] = 0 end
+            table.insert(results, { uid = job.uid, id = job.id, amount = amount })
+        end
+        return results
+    end
+
+    -- Pungut semua drop dengan id di `ids` dalam kotak di sekitar posisi berdiri `anchor`:
+    -- |x - tengah| <= radius, dan y dari anchor.y - up sampai anchor.y + down.
+    -- Return: tabel { [id] = jumlah yang berhasil dipungut }, dan jumlah drop yang dilewati.
+    function Drops.collectNear(anchor, ids, token, options)
+        options = options or {}
+        local radius, up, down = options.radius or 1.25, options.up or 1.5, options.down or 1.25
+        pause(App.config.options.collectDelay, token)
+        return Movement.withoutPickups(function()
+            local r = worldCheck(anchor.world, token)
+            Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
+            local attempts, retryAt, deadline = {}, {}, os.clock() + App.config.options.actionTimeout
+            local collected, gemsTaken, skipped = {}, 0, 0
+            local wanted = {}
+            for _, id in ipairs(ids) do wanted[id] = true end
+            local function nearby(drop)
+                return not drop.display and not drop.pending and type(drop.uid) == "number"
+                    and type(drop.n) == "number" and drop.n > 0 and not drop.taking and wanted[drop.id]
+                    and type(drop.x) == "number" and type(drop.y) == "number"
+                    and math.abs(drop.x - (anchor.x + 0.5)) <= radius
+                    and drop.y >= anchor.y - up and drop.y <= anchor.y + down
+            end
+            while true do
+                worldCheck(anchor.world, token)
+                if options.onEachRound then options.onEachRound() end
+                local targets, waiting = {}, false
+                skipped = 0
+                for _, drop in pairs(r.world.dropList()) do
+                    if nearby(drop) then
+                        local room = drop.id == Drops.GEM and 65535 or r.inventory:room(drop.id)
+                        if room > 0 then
+                            retryAt[drop.uid] = retryAt[drop.uid] or ((drop.refused or -math.huge) + 1)
+                            if (attempts[drop.uid] or 0) >= 3 then skipped = skipped + 1
+                            elseif math.max(drop.readyAt or 0, retryAt[drop.uid]) > os.clock() then waiting = true
+                            else table.insert(targets, drop) end
+                        end
+                    end
+                end
+                if #targets == 0 then
+                    if gemsTaken > 0 and r.gemHud then
+                        local ok, gems = pcall(Net.bounded, r.world.call, App.config.options.actionTimeout, token, "GetGems")
+                        if ok and type(gems) == "number" then r.gemHud.setGems(gems) end
+                    end
+                    if not waiting or os.clock() >= deadline then return collected, skipped end
+                    pause(0.05, token)
+                else
+                    local accepted = false
+                    for _, result in ipairs(Drops.takeBatch(anchor.world, targets, attempts, retryAt, nearby, token)) do
+                        if result.amount > 0 then
+                            accepted = true
+                            collected[result.id] = (collected[result.id] or 0) + result.amount
+                            if result.id == Drops.GEM then gemsTaken = gemsTaken + result.amount end
+                        end
+                    end
+                    if accepted then
+                        Actions.refreshInventory(token)
+                        deadline = os.clock() + App.config.options.actionTimeout
+                    end
+                end
+            end
+        end)
+    end
+
+    return Drops
+end
+
+end)()
+
 -- ===== src/jobs.lua =====
 __modules["jobs"] = (function(...)
 -- jobs.lua: mulai/stop task (Planting, Harvest, PNB, Rotation) dengan satu cara yang sama.
@@ -2074,7 +2252,7 @@ return function(G)
         UI.tabs.harvest = window:Tab({ Title = "Harvest", Icon = "package" })
         UI.tabs.rotation = window:Tab({ Title = "Rotation", Icon = "repeat" })
         UI.tabs.settings = window:Tab({ Title = "Settings", Icon = "settings" })
-        UI.tabs.pnb:Paragraph({ Title = "Belum dibuat", Desc = "Place & Break dan Auto Collect ditambah di tahap berikutnya." })
+        G.Pnb.buildTab(UI.tabs.pnb)
         G.Plant.buildTab(UI.tabs.plant)
         for _, key in ipairs({ "harvest", "rotation" }) do
             UI.tabs[key]:Paragraph({ Title = "Belum dibuat", Desc = "Fitur ini ditambah di tahap berikutnya." })
@@ -2786,6 +2964,418 @@ end
 
 end)()
 
+-- ===== src/pnb.lua =====
+__modules["pnb"] = (function(...)
+-- pnb.lua: Place & Break dengan grid 5x5 (layout terinspirasi Crusader), stock dari lantai,
+-- dan perekam aksi game untuk menemukan cara drop seed.
+-- placeTile/breakTile/settleTile diadaptasi dari Clarissv main.lua v0.1.43; bedanya grid bisa
+-- sampai 24 tile di sekitar karakter, dan tile yang terisi blok lain dilewati, bukan error.
+return function(G)
+    local App, Core, Bridge, Net, Actions, Movement, Drops, State, task =
+        G.App, G.Core, G.Bridge, G.Net, G.Actions, G.Movement, G.Drops, G.State, G.task
+    local Pnb = {}
+    local worldCheck, position, checkpoint, pause = Bridge.worldCheck, Bridge.position, Net.checkpoint, Net.pause
+    local count, tileAt, refreshInventory = Actions.count, Actions.tileAt, Actions.refreshInventory
+
+    ---------------------------------------------------------------- posisi
+    -- Tile berdiri karakter sekarang: x = kolom, y = baris tempat badan (kaki di y + 1).
+    function Pnb.standingTile()
+        local r, state = Bridge.runtime(), position()
+        assert(state.grounded, "Berdiri di lantai dulu, jangan sambil lompat.")
+        return { world = r.world.name, x = math.floor(state.x), y = math.floor(state.y - 0.01) }
+    end
+    -- Tile absolut dari daftar offset, urut atas ke bawah, kiri ke kanan.
+    function Pnb.targets(anchor)
+        local list = {}
+        for _, tile in ipairs(Core.sortPNBTiles(Core.validatePNBTiles(App.config.pnb.tiles))) do
+            table.insert(list, { x = anchor.x + tile.dx, y = anchor.y + tile.dy })
+        end
+        return list
+    end
+    local function atAnchor(anchor)
+        local state = position()
+        return state.grounded and math.abs(state.x - (anchor.x + 0.5)) < 0.3 and math.abs(state.y - (anchor.y + 1)) < 0.3
+    end
+    local function ensureAnchor(anchor, token)
+        if not atAnchor(anchor) then Movement.moveTo(anchor.x, anchor.y, anchor.world, token) end
+    end
+
+    ---------------------------------------------------------------- place & break
+    local function settleTile(x, y, id, seconds, worldName, token)
+        local deadline = os.clock() + seconds
+        repeat
+            worldCheck(worldName, token)
+            assert(tileAt(x, y) == id, "Tile " .. x .. ", " .. y .. " changed while the action settled. Stopping.")
+            pause(0.03, token)
+        until os.clock() >= deadline
+    end
+
+    -- Taruh satu blok, lalu tunggu server benar-benar mengurangi blok di tas.
+    local function placeTile(anchor, point, id, token)
+        return Movement.withoutPickups(function()
+            local r = worldCheck(anchor.world, token)
+            assert(atAnchor(anchor), "Karakter bergeser dari posisi PNB.")
+            local before = refreshInventory(token)[id] or 0
+            worldCheck(anchor.world, token)
+            if tileAt(point.x, point.y) ~= 0 then return false end
+            assert(r.handlers.canPlace(r.items[id], point.x, point.y),
+                "Cannot place at " .. point.x .. ", " .. point.y .. ". Check reach, access, and empty tiles.")
+            assert(before > 0, "No blocks are left in your backpack.")
+            r.handlers.setTile("fg", point.x, point.y, id, false, (position().facing or 1) < 0)
+            App.lastPlacement = { x = point.x, y = point.y, world = anchor.world, grid = r.world.fg, at = os.clock() }
+            r.inventory:remove(id, 1)
+            pause(App.config.options.placeDelay, token)
+            local deadline = os.clock() + App.config.options.actionTimeout
+            while true do
+                worldCheck(anchor.world, token)
+                local after = refreshInventory(token)[id] or 0
+                if after == before - 1 then break end
+                assert(after == before, "Backpack changed unexpectedly while placing. Stopping.")
+                assert(os.clock() < deadline, "The server did not consume a block for tile "
+                    .. point.x .. ", " .. point.y .. ". Check placement access and range.")
+                pause(0.15, token)
+            end
+            settleTile(point.x, point.y, id, 0.12, anchor.world, token)
+            return true
+        end)
+    end
+
+    -- Pukul sampai pecah. Jeda antar pukulan = Hit delay (punchDelay).
+    local function breakTile(anchor, point, id, token)
+        local r = worldCheck(anchor.world, token)
+        assert(tileAt(point.x, point.y) == id, "The target tile changed. Stopping before punching another block.")
+        local deadline = os.clock() + App.config.options.actionTimeout + (r.items[id].hits or 1) * App.config.options.punchDelay
+        local placed = App.lastPlacement
+        if placed and placed.world == anchor.world and placed.grid == r.world.fg and placed.x == point.x and placed.y == point.y then
+            local remaining = 0.32 - (os.clock() - placed.at) -- blok baru ditaruh butuh waktu sebelum bisa dipukul
+            if remaining > 0 then pause(remaining, token) end
+        end
+        while tileAt(point.x, point.y) == id do
+            worldCheck(anchor.world, token)
+            assert(atAnchor(anchor), "Karakter bergeser dari posisi PNB.")
+            assert(os.clock() < deadline, "Block did not break. Check permissions and your punching range.")
+            r.handlers.hit(point.x, point.y)
+            pause(App.config.options.punchDelay, token)
+        end
+        assert(tileAt(point.x, point.y) == 0, "The block changed while breaking.")
+        settleTile(point.x, point.y, 0, math.max(0.18, App.config.options.punchDelay), anchor.world, token)
+        App.stats.broken = App.stats.broken + 1
+    end
+
+    -- Area pungut di sekitar grid 5x5: 2,75 tile ke samping, 3 ke atas, 2,5 ke bawah.
+    local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
+
+    ---------------------------------------------------------------- stock & drop
+    -- Jalan ke posisi stock, pungut blok di lantai, lalu kembali. Return jumlah yang dipungut.
+    function Pnb.takeStock(anchor, blockId, token)
+        local stock = App.config.points.stock
+        G.setStatus("Mengambil stock blok dari lantai...")
+        Movement.moveTo(stock.x, stock.y, stock.world, token)
+        local collected = Drops.collectNear(stock, { blockId }, token, { radius = 1.5, up = 1.5, down = 1.25 })
+        ensureAnchor(anchor, token)
+        return collected[blockId] or 0
+    end
+
+    -- Drop seed ke lantai. Caranya belum diketahui: perlu hasil "Rekam aksi drop".
+    -- Pnb.dropMethod diisi setelah rekaman membuktikan perintah drop yang dipakai game.
+    function Pnb.dropSeeds(anchor, seedId, token)
+        assert(Pnb.dropMethod, "Auto drop seed belum bisa dipakai: tekan 'Rekam aksi drop', drop seed manual sekali, lalu kirim diagnostics.")
+        local spot = App.config.points.seedDrop
+        G.setStatus("Drop seed di posisi drop...")
+        Movement.moveTo(spot.x, spot.y, spot.world, token)
+        Pnb.dropMethod(seedId, count(seedId), token)
+        refreshInventory(token)
+        ensureAnchor(anchor, token)
+    end
+
+    ---------------------------------------------------------------- loop utama
+    function Pnb.run(token)
+        local r = Bridge.runtime()
+        local anchor, blockId = App.config.points.pnb, App.config.blockId
+        local okSeed, seedId = pcall(Core.seedId, r.items, blockId)
+        if not okSeed then seedId = nil end
+        local pickupIds = { blockId, Drops.GEM }
+        if seedId then table.insert(pickupIds, seedId) end
+        worldCheck(anchor.world, token)
+        ensureAnchor(anchor, token)
+        G.setStatus("PNB mulai di " .. anchor.world .. " (" .. anchor.x .. ", " .. anchor.y .. "), " .. #App.config.pnb.tiles .. " tile.")
+        while true do
+            checkpoint(token)
+            worldCheck(anchor.world, token)
+            ensureAnchor(anchor, token)
+            refreshInventory(token)
+            if seedId and App.config.pnb.autoDrop and count(seedId) >= App.config.options.seedThreshold then
+                Pnb.dropSeeds(anchor, seedId, token)
+            end
+            local targets, existing = Pnb.targets(anchor), false
+            for _, point in ipairs(targets) do if tileAt(point.x, point.y) == blockId then existing = true end end
+            if count(blockId) == 0 and not existing then
+                Drops.collectNear(anchor, pickupIds, token, GRID_AREA)
+                if count(blockId) == 0 then
+                    if App.config.pnb.autoStock and Pnb.takeStock(anchor, blockId, token) > 0 then
+                        refreshInventory(token)
+                    else
+                        G.setStatus(App.config.pnb.autoStock and "Selesai: stock blok di lantai habis."
+                            or "Selesai: blok di tas habis. Nyalakan Auto take stock untuk ambil dari lantai.")
+                        return
+                    end
+                end
+            end
+            G.setStatus("Placing " .. r.items[blockId].name .. "...")
+            local worked = existing
+            for _, point in ipairs(targets) do
+                if count(blockId) == 0 then break end
+                if tileAt(point.x, point.y) == 0 and placeTile(anchor, point, blockId, token) then worked = true end
+            end
+            G.setStatus("Breaking the selected blocks...")
+            for _, point in ipairs(targets) do
+                if tileAt(point.x, point.y) == blockId then breakTile(anchor, point, blockId, token) end
+            end
+            assert(worked, "Semua tile PNB terhalang blok lain. Kosongkan tile yang dipilih atau pilih tile lain.")
+            G.setStatus("Collecting gems, seeds, and returned blocks...")
+            Drops.collectNear(anchor, pickupIds, token, GRID_AREA)
+        end
+    end
+
+    G.Jobs.register("pnb", {
+        label = "Place & Break",
+        prepare = function(r)
+            assert(r.body and r.controls and r.handlers.setTile and r.handlers.hit and r.handlers.canPlace,
+                "Hook place/break tidak tersedia. Copy diagnostics dari Settings.")
+            -- Posisi PNB = tempat karakter berdiri saat toggle dinyalakan (seperti Crusader).
+            App.config.points.pnb = Pnb.standingTile()
+        end,
+        run = function(token) Pnb.run(token) end,
+    })
+
+    ---------------------------------------------------------------- perekam aksi game
+    -- Bungkus sementara semua fungsi milik world dan touch controls, lalu catat setiap panggilan
+    -- (nama + argumen) selama `seconds` detik. Dipakai untuk mencari perintah drop item.
+    local NOISY = { dir = true, jumping = true, dropList = true, backpackNow = true, state = true }
+    local function describe(value)
+        local kind = type(value)
+        if kind == "number" or kind == "boolean" then return tostring(value) end
+        if kind == "string" then return string.format("%q", #value > 24 and value:sub(1, 24) .. "..." or value) end
+        if kind == "table" then
+            local n = 0
+            pcall(function() for _ in next, value do n = n + 1 end end)
+            return "table(" .. n .. ")"
+        end
+        return kind
+    end
+    function Pnb.record(seconds)
+        Net.idle()
+        local r = Bridge.runtime()
+        local log, counts, wrapped = {}, {}, {}
+        local function wrap(owner, label)
+            for key, fn in next, owner do
+                if type(fn) == "function" and not NOISY[key] then
+                    local original = fn
+                    local wrapper = function(...)
+                        local args = table.pack(...)
+                        local parts = {}
+                        for i = 1, math.min(args.n, 8) do parts[i] = describe(args[i]) end
+                        local signature = label .. "." .. tostring(key) .. "(" .. table.concat(parts, ", ") .. ")"
+                        counts[signature] = (counts[signature] or 0) + 1
+                        if counts[signature] == 1 and #log < 40 then table.insert(log, signature) end
+                        return original(...)
+                    end
+                    table.insert(wrapped, { owner = owner, key = key, original = original, wrapper = wrapper })
+                end
+            end
+        end
+        wrap(r.world, "world")
+        wrap(r.controls, "controls")
+        for _, item in ipairs(wrapped) do rawset(item.owner, item.key, item.wrapper) end
+        App.recording = true
+        App.recordReport = { "Rekaman berjalan..." }
+        G.setStatus("Merekam " .. seconds .. " detik. Drop seed secara MANUAL sekarang (sekali saja).")
+        task.delay(seconds, function()
+            for _, item in ipairs(wrapped) do
+                if rawget(item.owner, item.key) == item.wrapper then rawset(item.owner, item.key, item.original) end
+            end
+            App.recording = false
+            local report = {}
+            for _, signature in ipairs(log) do table.insert(report, signature .. " x" .. counts[signature]) end
+            if #report == 0 then report = { "Tidak ada panggilan tercatat. Coba drop seed lagi saat rekaman berjalan." } end
+            App.recordReport = report
+            G.setStatus("Rekaman selesai (" .. #log .. " jenis panggilan). Copy diagnostics di Settings dan kirim.")
+        end)
+    end
+
+    ---------------------------------------------------------------- tab Place & Break
+    local function tileSet()
+        local set = {}
+        for _, tile in ipairs(App.config.pnb.tiles) do set[tile.dx .. ":" .. tile.dy] = true end
+        return set
+    end
+    -- Peta teks 5x5 untuk paragraf: [Y] = karakter, [#] = dipilih, [ ] = kosong.
+    function Pnb.gridText()
+        local set, lines = tileSet(), {}
+        for dy = -2, 2 do
+            local row = {}
+            for dx = -2, 2 do
+                row[#row + 1] = (dx == 0 and dy == 0) and "[Y]" or (set[dx .. ":" .. dy] and "[#]" or "[  ]")
+            end
+            lines[#lines + 1] = table.concat(row, " ")
+        end
+        return table.concat(lines, "\n")
+    end
+    function Pnb.toggleTile(dx, dy)
+        Net.idle()
+        if dx == 0 and dy == 0 then return end
+        local tiles, removed = {}, false
+        for _, tile in ipairs(App.config.pnb.tiles) do
+            if tile.dx == dx and tile.dy == dy then removed = true else table.insert(tiles, tile) end
+        end
+        if not removed then table.insert(tiles, { dx = dx, dy = dy }) end
+        App.config.pnb.tiles = Core.validatePNBTiles(tiles)
+        State.saveSession()
+        if Pnb.refreshTab then Pnb.refreshTab() end
+    end
+
+    -- Panel 5x5 melayang (Roblox GUI). Klik kotak = pilih/batal pilih tile; kotak tengah = karakter.
+    function Pnb.openGridPanel()
+        if Pnb.panel and Pnb.panel.Parent then Pnb.panel:Destroy(); Pnb.panel = nil; return end
+        local new = G.newInstance
+        local gui = new("ScreenGui")
+        gui.Name, gui.ResetOnSpawn = "GrowbloxHanselPNBTiles", false
+        local frame = new("Frame")
+        frame.Size, frame.Position = G.UDim2.fromOffset(250, 300), G.UDim2.new(0.5, -125, 0.5, -150)
+        frame.BackgroundColor3, frame.BorderSizePixel, frame.Active = G.Color3.fromRGB(30, 30, 36), 0, true
+        frame.Parent = gui
+        local title = new("TextLabel")
+        title.Size, title.Position, title.BackgroundTransparency = G.UDim2.fromOffset(250, 30), G.UDim2.fromOffset(0, 0), 1
+        title.Text, title.TextColor3, title.TextSize = "PNB tiles - klik untuk pilih", G.Color3.fromRGB(235, 235, 235), 14
+        title.Parent = frame
+        local buttons = {}
+        local function paint()
+            local set = tileSet()
+            for key, button in pairs(buttons) do
+                local selected = set[key]
+                button.BackgroundColor3 = selected and G.Color3.fromRGB(70, 160, 90) or G.Color3.fromRGB(60, 60, 70)
+                button.Text = selected and "#" or ""
+            end
+        end
+        for dy = -2, 2 do
+            for dx = -2, 2 do
+                local button = new("TextButton")
+                button.Size = G.UDim2.fromOffset(42, 42)
+                button.Position = G.UDim2.fromOffset(15 + (dx + 2) * 45, 38 + (dy + 2) * 45)
+                button.BorderSizePixel, button.TextColor3, button.TextSize = 0, G.Color3.fromRGB(255, 255, 255), 16
+                button.Parent = frame
+                if dx == 0 and dy == 0 then
+                    button.Text, button.BackgroundColor3, button.AutoButtonColor = "You", G.Color3.fromRGB(70, 110, 190), false
+                else
+                    buttons[dx .. ":" .. dy] = button
+                    button.MouseButton1Click:Connect(function()
+                        local ok, message = pcall(Pnb.toggleTile, dx, dy)
+                        if not ok then G.notify(tostring(message)) end
+                        paint()
+                    end)
+                end
+            end
+        end
+        local close = new("TextButton")
+        close.Size, close.Position = G.UDim2.fromOffset(220, 30), G.UDim2.fromOffset(15, 262)
+        close.Text, close.BackgroundColor3, close.TextColor3 = "Tutup", G.Color3.fromRGB(90, 50, 50), G.Color3.fromRGB(255, 255, 255)
+        close.BorderSizePixel, close.Parent = 0, frame
+        close.MouseButton1Click:Connect(function() gui:Destroy(); Pnb.panel = nil end)
+        paint()
+        gui.Parent = G.guiParent()
+        Pnb.panel = gui
+    end
+
+    function Pnb.buildTab(tab)
+        local UI = G.UI
+        local controls, blockLookup, syncing = {}, {}, true
+
+        local function refreshBlocks()
+            if not App.runtime then return end
+            local labels, selected = {}, nil
+            blockLookup = {}
+            for _, block in ipairs(Actions.farmableBlocks()) do
+                local label = block.name .. " [" .. block.id .. "] x" .. count(block.id)
+                table.insert(labels, label)
+                blockLookup[label] = block.id
+                if block.id == App.config.blockId then selected = label end
+            end
+            syncing = true
+            pcall(function() controls.block:Refresh(labels) end)
+            if selected then pcall(function() controls.block:Select(selected) end) end
+            syncing = false
+        end
+        function Pnb.refreshTab()
+            UI.paragraph(controls.grid, "PNB tiles", Pnb.gridText())
+            UI.paragraph(controls.stock, "Stock position", App.config.points.stock
+                and (App.config.points.stock.world .. "  |  tile " .. App.config.points.stock.x .. ", " .. App.config.points.stock.y) or "Belum diset")
+            UI.paragraph(controls.drop, "Seed drop position", App.config.points.seedDrop
+                and (App.config.points.seedDrop.world .. "  |  tile " .. App.config.points.seedDrop.x .. ", " .. App.config.points.seedDrop.y) or "Belum diset")
+        end
+        local function setOption(fn)
+            if syncing then return end
+            local ok, message = pcall(function() Net.idle(); fn(); State.saveSession() end)
+            if not ok then G.notify(tostring(message)) end
+        end
+
+        UI.addStatus(tab:Paragraph({ Title = "Status", Desc = App.status }))
+        controls.block = tab:Dropdown({ Title = "Block in your backpack", Values = {}, SearchBarEnabled = true,
+            Callback = function(value)
+                if type(value) == "table" then value = value[1] end
+                setOption(function() App.config.blockId = assert(blockLookup[value], "Pilih blok.") end)
+            end })
+        tab:Button({ Title = "Refresh block", Callback = UI.action(refreshBlocks) })
+        G.Jobs.toggles.pnb = tab:Toggle({ Title = "Place & Break", Value = false,
+            Desc = "Posisi PNB = tempat lo berdiri saat toggle dinyalakan.",
+            Callback = function(enabled) G.Jobs.setRunning("pnb", enabled) end })
+        tab:Slider({ Title = "Hit delay (detik)", Step = 0.01,
+            Value = { Min = Core.LIMITS.punchDelay[1], Max = Core.LIMITS.punchDelay[2], Default = App.config.options.punchDelay },
+            Callback = function(value) setOption(function() App.config.options.punchDelay = tonumber(value) end) end })
+
+        controls.stock = tab:Paragraph({ Title = "Stock position", Desc = "Belum diset" })
+        tab:Button({ Title = "Set stock position here", Desc = "Berdiri di tempat blok stock berserakan di lantai.",
+            Callback = UI.action(function()
+                App.config.points.stock = Pnb.standingTile()
+                Pnb.refreshTab()
+                G.setStatus("Stock position disimpan.")
+            end) })
+        controls.autoStock = tab:Toggle({ Title = "Auto take stock", Value = App.config.pnb.autoStock,
+            Desc = "Blok di tas habis: jalan ke stock position, pungut blok di lantai, lalu lanjut PNB.",
+            Callback = function(enabled) setOption(function() App.config.pnb.autoStock = enabled == true end) end })
+
+        controls.drop = tab:Paragraph({ Title = "Seed drop position", Desc = "Belum diset" })
+        tab:Button({ Title = "Set seed drop position here", Callback = UI.action(function()
+            App.config.points.seedDrop = Pnb.standingTile()
+            Pnb.refreshTab()
+            G.setStatus("Seed drop position disimpan.")
+        end) })
+        controls.autoDrop = tab:Toggle({ Title = "Auto drop seed", Value = App.config.pnb.autoDrop,
+            Desc = "Seed di tas mencapai batas: jalan ke drop position dan drop seed. Butuh hasil 'Rekam aksi drop'.",
+            Callback = function(enabled) setOption(function() App.config.pnb.autoDrop = enabled == true end) end })
+        tab:Slider({ Title = "Drop seed saat seed di tas >=", Step = 1,
+            Value = { Min = 1, Max = 200, Default = App.config.options.seedThreshold },
+            Callback = function(value) setOption(function() App.config.options.seedThreshold = math.floor(tonumber(value)) end) end })
+        tab:Button({ Title = "Rekam aksi drop (30 detik)", Desc = "Tekan, lalu drop seed MANUAL sekali. Hasilnya muncul di Copy diagnostics.",
+            Callback = function() local ok, message = pcall(Pnb.record, 30); if not ok then G.notify(tostring(message)) end end })
+
+        controls.grid = tab:Paragraph({ Title = "PNB tiles", Desc = Pnb.gridText() })
+        tab:Button({ Title = "Atur PNB tiles (5x5)", Desc = "Buka panel kotak 5x5. Kotak tengah = lo. Klik kotak lain untuk dipilih.",
+            Callback = function() local ok, message = pcall(Pnb.openGridPanel); if not ok then G.notify(tostring(message)) end end })
+        tab:Button({ Title = "Clear tiles", Callback = UI.action(function()
+            App.config.pnb.tiles = {}
+            Pnb.refreshTab()
+            G.setStatus("Semua tile PNB dihapus. Pilih lagi lewat Atur PNB tiles.")
+        end) })
+        syncing = false
+        Pnb.refreshTab()
+        table.insert(G.onConnected, function() pcall(refreshBlocks); pcall(Pnb.refreshTab) end)
+    end
+
+    return Pnb
+end
+
+end)()
+
 -- ===== src/main.lua =====
 __modules["main"] = (function(...)
 -- main.lua: titik masuk. Kumpulkan alat dari executor/Roblox, rangkai semua modul, connect ke game.
@@ -2855,6 +3445,11 @@ return function(modules, VERSION)
     G.focusedTextBox = function() return UserInputService:GetFocusedTextBox() end
     G.env = env
     G.queueOnTeleport = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
+    G.newInstance, G.Color3 = Instance and Instance.new, Color3
+    G.guiParent = function()
+        if type(gethui) == "function" then return gethui() end
+        return game:GetService("CoreGui")
+    end
 
     local WindUI
     function G.setStatus(text)
@@ -2878,9 +3473,11 @@ return function(modules, VERSION)
     G.Actions = modules.actions(G)
     G.Movement = modules.movement(G)
     G.Storage = modules.storage(G)
+    G.Drops = modules.drops(G)
     G.Jobs = modules.jobs(G)
     G.UI = modules.ui(G)
     G.Plant = modules.plant(G)
+    G.Pnb = modules.pnb(G)
     App.config = G.Core.defaults()
 
     function G.connect()
@@ -2907,9 +3504,15 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
-            "Seed ditanam sesi ini: " .. App.stats.planted,
+            "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
+            "PNB: blok " .. tostring(App.config.blockId) .. ", " .. #App.config.pnb.tiles .. " tile, auto stock "
+                .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop),
         }
         for _, line in ipairs(App.discoveryReport) do table.insert(lines, line) end
+        if App.recordReport then
+            table.insert(lines, "Rekaman aksi game:")
+            for _, line in ipairs(App.recordReport) do table.insert(lines, "  " .. line) end
+        end
         table.insert(lines, "Log:")
         for i = 1, math.min(#App.logs, 15) do table.insert(lines, App.logs[i]) end
         return table.concat(lines, "\n")

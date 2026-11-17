@@ -3,7 +3,9 @@
 local Core = {}
 
 Core.CONFIG_VERSION = 1
-Core.POINTS = { "pnb", "blockBox", "seedBox", "farmBox", "plantBox" }
+Core.POINTS = { "pnb", "blockBox", "seedBox", "farmBox", "plantBox", "stock", "seedDrop" }
+-- Titik yang berupa TEMPAT BERDIRI (bukan box), jadi tidak butuh standX/standY.
+Core.STAND_POINTS = { pnb = true, stock = true, seedDrop = true }
 Core.COLLECT_FILTERS = { "all", "gems", "crop" }
 
 -- Angka yang boleh diatur user: { minimum, maksimum, bawaan }.
@@ -31,7 +33,29 @@ function Core.defaults()
         version = Core.CONFIG_VERSION, blockId = 0, points = {}, options = options,
         planting = { seedId = 0, storageWorld = "", worlds = {} },
         harvesting = { method = "fist" },
+        -- PNB: tiles = kotak yang di-place & break, relatif ke posisi berdiri (dx kanan, dy bawah).
+        pnb = { tiles = { { dx = 0, dy = -1 } }, autoStock = false, autoDrop = false },
     }
+end
+
+-- Validasi daftar tile PNB: dalam kotak 5x5 (dx, dy -2..2), bukan kotak tengah, tanpa duplikat.
+function Core.validatePNBTiles(tiles)
+    assert(type(tiles) == "table", "Daftar tile PNB rusak.")
+    local out, seen = {}, {}
+    for index, tile in ipairs(tiles) do
+        assert(type(tile) == "table" and integer(tile.dx, -2, 2) and integer(tile.dy, -2, 2), "Tile PNB di luar kotak 5x5.")
+        assert(not (tile.dx == 0 and tile.dy == 0), "Kotak tengah adalah posisi karakter.")
+        local key = tile.dx .. ":" .. tile.dy
+        assert(not seen[key], "Tile PNB dobel: " .. key)
+        seen[key] = true
+        out[index] = { dx = tile.dx, dy = tile.dy }
+    end
+    return out
+end
+-- Urutan tile tetap (atas ke bawah, kiri ke kanan) supaya place/break selalu dengan urutan sama.
+function Core.sortPNBTiles(tiles)
+    table.sort(tiles, function(a, b) return a.dy < b.dy or a.dy == b.dy and a.dx < b.dx end)
+    return tiles
 end
 
 function Core.worldName(value)
@@ -95,7 +119,7 @@ function Core.validate(input)
             local copy = { world = Core.worldName(point.world) }
             assert(integer(point.x, 0, 65535) and integer(point.y, 0, 65535), "Tile tidak valid: " .. key)
             copy.x, copy.y = point.x, point.y
-            if key ~= "pnb" then -- box butuh posisi berdiri di depannya
+            if not Core.STAND_POINTS[key] then -- box butuh posisi berdiri di depannya
                 assert(integer(point.standX, 0, 65535) and integer(point.standY, 0, 65535),
                     "Posisi berdiri hilang: " .. key)
                 copy.standX, copy.standY = point.standX, point.standY
@@ -109,6 +133,17 @@ function Core.validate(input)
         assert(type(planting) == "table", "Bagian planting di profil rusak.")
         out.planting = Core.validatePlanting({ seedId = planting.seedId or 0,
             storageWorld = planting.storageWorld or "", worlds = planting.worlds or {} })
+    end
+
+    if input.pnb ~= nil then
+        assert(type(input.pnb) == "table", "Bagian pnb di profil rusak.")
+        if input.pnb.tiles ~= nil then out.pnb.tiles = Core.validatePNBTiles(input.pnb.tiles) end
+        for _, key in ipairs({ "autoStock", "autoDrop" }) do
+            if input.pnb[key] ~= nil then
+                assert(type(input.pnb[key]) == "boolean", "Setting PNB tidak valid: " .. key)
+                out.pnb[key] = input.pnb[key]
+            end
+        end
     end
 
     local harvesting = input.harvesting or {}
@@ -268,6 +303,19 @@ function Core.checkSetup(config, mode, items)
         assert(config.points.plantBox.world:upper() == p.storageWorld, "The saved seed Display Box must be in the entered storage world.")
         assert(#p.worlds > 0, "Enter at least one dirt farm world.")
         for _, name in ipairs(p.worlds) do assert(name ~= p.storageWorld, "Seed storage and dirt farm worlds must be different.") end
+        return true
+    end
+    if mode == "pnb" then
+        assert(config.blockId > 0 and Core.farmable(items[config.blockId]), "Pilih blok yang bisa di-PNB.")
+        assert(#config.pnb.tiles > 0, "Pilih minimal satu tile PNB.")
+        local spot = config.points.pnb
+        assert(spot, "Posisi PNB belum ada.")
+        for _, key in ipairs({ "stock", "seedDrop" }) do
+            local point = config.points[key]
+            assert(not point or point.world == spot.world, "Posisi " .. key .. " harus di world yang sama dengan PNB.")
+        end
+        if config.pnb.autoStock then assert(config.points.stock, "Set stock position dulu, atau matikan Auto take stock.") end
+        if config.pnb.autoDrop then assert(config.points.seedDrop, "Set seed drop position dulu, atau matikan Auto drop seed.") end
         return true
     end
     error("Unknown farming task: " .. tostring(mode))

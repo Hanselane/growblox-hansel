@@ -40,6 +40,10 @@ function T.scheduler()
         return co
     end
     function S.task.defer(fn, ...) return S.task.spawn(fn, ...) end
+    function S.task.delay(seconds, fn, ...)
+        local args = table.pack(...)
+        return S.task.spawn(function() S.task.wait(seconds); fn(table.unpack(args, 1, args.n)) end)
+    end
     function S.task.wait(seconds)
         seconds = seconds or 0.016
         if coroutine.isyieldable() then coroutine.yield(seconds) else S.now = S.now + seconds end

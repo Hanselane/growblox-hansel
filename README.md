@@ -1,8 +1,8 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.2.3**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.0**. *Learn to own.*
 
-Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) dan fitur **Planting**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
+Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
 Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama pohon tumbuh → panen farm yang matang → pindahkan blok dan seed → tanam ulang → ulangi**.
 
@@ -12,6 +12,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Requirements](#requirements)
 - [Mulai](#mulai)
 - [Tab di jendela](#tab-di-jendela)
+- [Place & Break](#place--break)
 - [Planting](#planting)
 - [Menyambung ke game](#menyambung-ke-game)
 - [Data yang disimpan](#data-yang-disimpan)
@@ -25,7 +26,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Fitur | Tab | Status |
 | --- | --- | --- |
 | Pondasi: connect, retry, simpan setting, loader GitHub | Settings | Selesai, dites di game (v0.1.0) |
-| Place & Break + Auto Collect | Place & Break | Belum |
+| Place & Break | Place & Break | Selesai (v0.3.0), dites offline. Auto drop seed menunggu hasil rekaman |
 | Planting | Planting | Selesai (v0.2.0), dites offline |
 | Harvest | Harvest | Belum |
 | Rotation | Rotation | Belum |
@@ -53,11 +54,56 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 
 | Tab | Isi |
 | --- | --- |
-| **Place & Break** | PNB dan **Auto Collect** (ambil drop di sekitar karakter, dengan jangkauan yang bisa diatur). Belum dibuat. |
+| **Place & Break** | PNB dengan grid 5x5, hit delay, stock dari lantai, drop seed, perekam aksi game. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | Panen farm dan simpan hasilnya ke Display Box. Belum dibuat. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
 | **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, **Unload script**, dan log aktivitas. |
+
+## Place & Break
+
+Place & Break menaruh blok di tile yang dipilih di sekitar karakter, memukulnya sampai pecah, lalu memungut seed, gem, dan blok yang jatuh. Layout tab mengikuti gaya script Crusader; logika place/break diadaptasi dari Claris Growblox v0.1.43.
+
+### Requirements
+
+- Blok yang bisa di-PNB ada di tas (blok biasa yang punya hit; bukan background, lock, door, atau display).
+- Izin edit di area PNB.
+- Tile yang dipilih kosong. Tile yang berisi blok lain dilewati, tidak dipukul.
+- Untuk **Auto take stock**: blok stock berserakan di lantai, di world yang sama dengan PNB.
+
+### Setup
+
+1. Pilih blok di **Block in your backpack**. Tekan **Refresh block** kalau daftar kosong.
+2. Tekan **Atur PNB tiles (5x5)**. Panel kotak 5x5 muncul; kotak tengah **You** adalah posisi karakter. Klik kotak lain untuk memilih tile yang di-place & break. Klik lagi untuk membatalkan. **Clear tiles** menghapus semua pilihan.
+3. Atur **Hit delay**: jeda antar pukulan (0,22–2 detik).
+4. Opsional, stock dari lantai: berdiri di tempat blok stock berserakan, tekan **Set stock position here**, lalu nyalakan **Auto take stock**.
+5. Berdiri di posisi PNB, lalu nyalakan **Place & Break**. Posisi PNB adalah tempat karakter berdiri saat toggle dinyalakan.
+
+Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpilih.
+
+### Cara kerja
+
+1. Taruh blok di setiap tile terpilih yang kosong, urut dari atas ke bawah, kiri ke kanan. Setiap place dicek ke server: blok di tas harus berkurang satu.
+2. Pukul setiap tile sampai pecah, dengan jeda **Hit delay** di antara pukulan.
+3. Pungut seed, gem, dan blok yang jatuh di sekitar grid (2,75 tile ke samping, 3 ke atas, 2,5 ke bawah). Drop yang ditolak server 3 kali dilewati, PNB tetap lanjut.
+4. Blok di tas habis: dengan **Auto take stock**, jalan ke stock position, pungut blok di lantai, lalu kembali. Tanpa itu, PNB berhenti.
+
+| Status | Artinya |
+| --- | --- |
+| `Selesai: blok di tas habis.` | Blok habis dan Auto take stock mati |
+| `Selesai: stock blok di lantai habis.` | Tidak ada blok lagi di stock position |
+| `Semua tile PNB terhalang blok lain.` | Semua tile terpilih berisi blok lain; kosongkan atau pilih tile lain |
+| `Karakter bergeser dari posisi PNB.` | Karakter terdorong atau digerakkan saat place/break |
+
+### Auto drop seed dan perekam aksi
+
+Cara game men-drop item ke lantai belum diketahui, jadi **Auto drop seed belum bisa dipakai**. Untuk menemukannya:
+
+1. Tekan **Rekam aksi drop (30 detik)**.
+2. Dalam 30 detik itu, drop seed **secara manual** sekali.
+3. Setelah status `Rekaman selesai`, buka **Settings → Copy diagnostics**. Bagian `Rekaman aksi game` berisi daftar perintah yang dikirim game.
+
+Kirim hasil itu untuk dibuatkan Auto drop seed. Perekam hanya mencatat; ia tidak mengirim apa pun ke server, dan fungsi asli dipulihkan setelah 30 detik.
 
 ## Planting
 

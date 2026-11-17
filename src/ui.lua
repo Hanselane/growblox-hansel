@@ -46,7 +46,7 @@ return function(G)
         UI.tabs.harvest = window:Tab({ Title = "Harvest", Icon = "package" })
         UI.tabs.rotation = window:Tab({ Title = "Rotation", Icon = "repeat" })
         UI.tabs.settings = window:Tab({ Title = "Settings", Icon = "settings" })
-        UI.tabs.pnb:Paragraph({ Title = "Belum dibuat", Desc = "Place & Break dan Auto Collect ditambah di tahap berikutnya." })
+        G.Pnb.buildTab(UI.tabs.pnb)
         G.Plant.buildTab(UI.tabs.plant)
         for _, key in ipairs({ "harvest", "rotation" }) do
             UI.tabs[key]:Paragraph({ Title = "Belum dibuat", Desc = "Fitur ini ditambah di tahap berikutnya." })
