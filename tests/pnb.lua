@@ -157,6 +157,17 @@ T.test("Auto take stock: ambil blok dari lantai lalu lanjut PNB", function()
     T.eq(math.abs(sim.avatar.x - 10.5) < 0.3, true, "balik ke posisi PNB")
 end)
 
+T.test("Karakter terdorong dari spot: jalan balik dan PNB lanjut", function()
+    local sim = setup({ blocks = 4 })
+    sim.G.Jobs.start("pnb")
+    sim.S.run(3, 0.025)
+    sim.avatar.x = sim.avatar.x + 1.4 -- didorong 1,4 tile ke kanan
+    waitJob(sim, 120)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.App.stats.broken, 4, "semua blok tetap dipecah")
+    T.eq((sim.App.pnbRecoveries or 0) >= 1, true, "ada pemulihan")
+end)
 T.test("Tile yang terisi blok lain dilewati, tile lain tetap jalan", function()
     local sim = setup({ blocks = 2, extra = { ["9:8"] = DIRT } }) -- tile kiri atas sudah ada Dirt
     sim.G.Jobs.start("pnb")

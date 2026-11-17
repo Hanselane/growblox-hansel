@@ -126,7 +126,7 @@ return function(modules, VERSION)
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
             "PNB: blok " .. tostring(App.config.blockId) .. ", " .. #App.config.pnb.tiles .. " tile, auto stock "
-                .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop),
+                .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop) .. ", balik ke spot " .. (App.pnbRecoveries or 0) .. "x",
         }
         for _, line in ipairs(App.discoveryReport) do table.insert(lines, line) end
         if App.recordReport then

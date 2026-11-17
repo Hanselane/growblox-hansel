@@ -1,5 +1,5 @@
--- Growblox Hansel v0.3.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.3.0"
+-- Growblox Hansel v0.3.1. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.1"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -2999,6 +2999,24 @@ return function(G)
     local function ensureAnchor(anchor, token)
         if not atAnchor(anchor) then Movement.moveTo(anchor.x, anchor.y, anchor.world, token) end
     end
+    -- Karakter terdorong/terangkat dari spot (seperti di Clarissv: dipulihkan, bukan stop).
+    -- Tunggu sebentar kalau masih di udara, lalu jalan balik ke spot. Terlalu sering = stop.
+    local recoveries = {}
+    local function holdAnchor(anchor, token)
+        if atAnchor(anchor) then return end
+        local settle = os.clock() + 0.6
+        while os.clock() < settle and not atAnchor(anchor) do pause(0.05, token) end
+        if atAnchor(anchor) then return end
+        local now = os.clock()
+        table.insert(recoveries, now)
+        while recoveries[1] and now - recoveries[1] > 60 do table.remove(recoveries, 1) end
+        assert(#recoveries <= 10, "Karakter terus bergeser dari posisi PNB (10x dalam 1 menit). Cek apa yang mendorong karakter.")
+        App.pnbRecoveries = (App.pnbRecoveries or 0) + 1
+        G.setStatus("Karakter bergeser; kembali ke posisi PNB...")
+        local hold = Movement.takeControls()
+        hold.direction, hold.jump = 0, false
+        Movement.moveTo(anchor.x, anchor.y, anchor.world, token)
+    end
 
     ---------------------------------------------------------------- place & break
     local function settleTile(x, y, id, seconds, worldName, token)
@@ -3014,7 +3032,7 @@ return function(G)
     local function placeTile(anchor, point, id, token)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)
-            assert(atAnchor(anchor), "Karakter bergeser dari posisi PNB.")
+            holdAnchor(anchor, token)
             local before = refreshInventory(token)[id] or 0
             worldCheck(anchor.world, token)
             if tileAt(point.x, point.y) ~= 0 then return false end
@@ -3052,7 +3070,10 @@ return function(G)
         end
         while tileAt(point.x, point.y) == id do
             worldCheck(anchor.world, token)
-            assert(atAnchor(anchor), "Karakter bergeser dari posisi PNB.")
+            if not atAnchor(anchor) then
+                holdAnchor(anchor, token)
+                deadline = os.clock() + App.config.options.actionTimeout -- waktu jalan balik tidak dihitung
+            end
             assert(os.clock() < deadline, "Block did not break. Check permissions and your punching range.")
             r.handlers.hit(point.x, point.y)
             pause(App.config.options.punchDelay, token)
@@ -3102,7 +3123,7 @@ return function(G)
         while true do
             checkpoint(token)
             worldCheck(anchor.world, token)
-            ensureAnchor(anchor, token)
+            holdAnchor(anchor, token)
             refreshInventory(token)
             if seedId and App.config.pnb.autoDrop and count(seedId) >= App.config.options.seedThreshold then
                 Pnb.dropSeeds(anchor, seedId, token)
@@ -3189,7 +3210,7 @@ return function(G)
         for _, item in ipairs(wrapped) do rawset(item.owner, item.key, item.wrapper) end
         App.recording = true
         App.recordReport = { "Rekaman berjalan..." }
-        G.setStatus("Merekam " .. seconds .. " detik. Drop seed secara MANUAL sekarang (sekali saja).")
+        G.setStatus("Merekam " .. seconds .. " detik. Drop seed secara MANUAL sekarang. Copy diagnostics SETELAH status 'Rekaman selesai'.")
         task.delay(seconds, function()
             for _, item in ipairs(wrapped) do
                 if rawget(item.owner, item.key) == item.wrapper then rawset(item.owner, item.key, item.original) end
@@ -3506,7 +3527,7 @@ return function(modules, VERSION)
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
             "PNB: blok " .. tostring(App.config.blockId) .. ", " .. #App.config.pnb.tiles .. " tile, auto stock "
-                .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop),
+                .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop) .. ", balik ke spot " .. (App.pnbRecoveries or 0) .. "x",
         }
         for _, line in ipairs(App.discoveryReport) do table.insert(lines, line) end
         if App.recordReport then

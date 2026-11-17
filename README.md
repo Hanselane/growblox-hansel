@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.0**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.1**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -93,7 +93,8 @@ Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpil
 | `Selesai: blok di tas habis.` | Blok habis dan Auto take stock mati |
 | `Selesai: stock blok di lantai habis.` | Tidak ada blok lagi di stock position |
 | `Semua tile PNB terhalang blok lain.` | Semua tile terpilih berisi blok lain; kosongkan atau pilih tile lain |
-| `Karakter bergeser dari posisi PNB.` | Karakter terdorong atau digerakkan saat place/break |
+| `Karakter bergeser; kembali ke posisi PNB...` | Karakter terdorong saat place/break; script jalan balik ke spot dan lanjut |
+| `Karakter terus bergeser dari posisi PNB` | Terdorong lebih dari 10 kali dalam 1 menit; PNB berhenti |
 
 ### Auto drop seed dan perekam aksi
 
@@ -101,7 +102,7 @@ Cara game men-drop item ke lantai belum diketahui, jadi **Auto drop seed belum b
 
 1. Tekan **Rekam aksi drop (30 detik)**.
 2. Dalam 30 detik itu, drop seed **secara manual** sekali.
-3. Setelah status `Rekaman selesai`, buka **Settings → Copy diagnostics**. Bagian `Rekaman aksi game` berisi daftar perintah yang dikirim game.
+3. Tunggu sampai status berubah jadi `Rekaman selesai` (30 detik), baru buka **Settings → Copy diagnostics**. Bagian `Rekaman aksi game` berisi daftar perintah yang dikirim game.
 
 Kirim hasil itu untuk dibuatkan Auto drop seed. Perekam hanya mencatat; ia tidak mengirim apa pun ke server, dan fungsi asli dipulihkan setelah 30 detik.
 
