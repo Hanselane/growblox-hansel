@@ -126,7 +126,7 @@ Planting mengisi tanah kosong di setiap world farm dengan seed, berurutan sesuai
 
 - Satu **world storage** berisi Display Box dengan seed yang mau ditanam. World storage **boleh sama** dengan dirt farm world (box di world farm itu sendiri).
 - Box **boleh berisi item lain**. Game cuma punya perintah "ambil semua", jadi script mengambil semua isi box lalu langsung menaruh balik item lain ke box yang sama; yang tersisa di tas cuma seed yang dipilih. Kalau menaruh balik gagal, Planting berhenti dengan pesan (item itu ada di tas).
-- Satu atau lebih **world farm** yang bisa dimasuki langsung pakai nama. World storage tidak boleh ada di daftar farm.
+- Satu atau lebih **world farm** yang bisa dimasuki langsung pakai nama.
 - Baris tanam: tile kosong dengan **tanah padat atau platform tepat di bawahnya**. Baris harus bisa dicapai dengan jalan atau lompat dari pintu masuk world.
 - Izin edit di area farm (world lock / area lock). Tile tanpa izin dilewati.
 - Tas punya tempat untuk seed.
