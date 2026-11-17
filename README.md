@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.5**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.6**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -89,7 +89,7 @@ Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpil
 1. Taruh blok di setiap tile terpilih yang kosong, urut dari atas ke bawah, kiri ke kanan. Setiap place dicek ke server: blok di tas harus berkurang satu.
 2. Pukul setiap tile sampai pecah, dengan jeda **Hit delay** di antara pukulan.
 3. Pungut seed, gem, dan blok yang jatuh di sekitar grid (2,75 tile ke samping, 3 ke atas, 2,5 ke bawah). Server cuma terima pungut sejauh sekitar 1 tile, jadi drop di pinggir grid 5x5 didatangi: karakter melangkah ke lantai terdekat, memungut, lalu kembali ke spot. Drop yang tidak terjangkau dilewati, PNB tetap lanjut.
-4. Blok di tas habis: dengan **Auto take stock**, jalan ke stock position, lalu datangi tiap tumpukan blok dalam area 6 tile kiri-kanan (3 atas, 2 bawah) dengan cara yang sama, sampai tas penuh atau area kosong, lalu kembali. Hasilnya tercatat di diagnostics (`Stock terakhir`). Tanpa itu, PNB berhenti.
+4. Blok di tas habis: dengan **Auto take stock**, jalan ke stock position, lalu datangi tiap tumpukan blok dalam area 6 tile kiri-kanan (3 atas, 2 bawah) dengan cara yang sama, sampai tas penuh atau area kosong. Kalau tetap tidak dapat blok, karakter menyapu lantai area stock (ujung kiri ke ujung kanan) dengan pickup bawaan game aktif, seperti kalau lo jalan manual melewati item. Diagnostics `Stock (3 terakhir)` mencatat hasil, cara yang berhasil, dan isi lantai (id, jumlah, posisi, flag tiap drop). Tanpa itu, PNB berhenti.
 5. Seed di tas mencapai batas: dengan **Auto drop seed**, jalan ke Display Box seed, taruh semua seed (`DisplayItem`, cara PNB Claris Growblox), lalu kembali.
 
 | Status | Artinya |

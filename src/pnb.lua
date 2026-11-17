@@ -124,15 +124,65 @@ return function(G)
     -- karakter berdiri di lantai terdekat tiap tumpukan (Drops.collectArea, cara panen Clarissv).
     -- Return: jumlah blok yang bertambah di tas (termasuk yang terpungut otomatis saat lewat).
     local STOCK_AREA = { radius = 6, up = 3, down = 2 }
+
+    -- Isi lantai di sekitar stock untuk diagnostics: berapa drop, id apa, flag apa.
+    -- Dipakai kalau stock gagal, supaya kelihatan KENAPA drop tidak dianggap stock.
+    function Pnb.describeDrops(point, area, blockId)
+        local r = Bridge.runtime()
+        local total, same, samples = 0, 0, {}
+        for _, drop in pairs(r.world.dropList()) do
+            if type(drop) == "table" and type(drop.x) == "number" and type(drop.y) == "number"
+                and math.abs(drop.x - (point.x + 0.5)) <= area.radius + 2
+                and drop.y >= point.y - area.up - 2 and drop.y <= point.y + area.down + 2 then
+                total = total + 1
+                if drop.id == blockId then same = same + 1 end
+                if #samples < 5 then
+                    local flags = (drop.display and " display" or "") .. (drop.pending and " pending" or "")
+                        .. (drop.taking and " taking" or "") .. (drop.inBlock and " inBlock" or "")
+                    table.insert(samples, string.format("id %s n %s di %.2f,%.2f%s", tostring(drop.id),
+                        tostring(drop.n), drop.x, drop.y, flags))
+                end
+            end
+        end
+        local okRoom, room = pcall(function() return r.inventory:room(blockId) end)
+        return string.format("lantai: %d drop, %d id blok %s, muat di tas %s, stock tile %d,%d. %s", total, same,
+            tostring(blockId), okRoom and tostring(room) or "?", point.x, point.y, table.concat(samples, " | "))
+    end
+
+    -- Ambil stock dari lantai:
+    -- 1) ke stock position, datangi tiap tumpukan blok di area stock (6 tile kiri-kanan, 3 atas,
+    --    2 bawah) dan pungut lewat server (Drops.collectArea, cara panen Clarissv);
+    -- 2) kalau tetap tidak dapat, sapu lantai area stock (jalan ujung kiri -> ujung kanan) dengan
+    --    pickup bawaan game aktif, seperti kalau lo jalan manual melewati item.
+    -- Return: jumlah blok yang bertambah di tas.
     function Pnb.takeStock(anchor, blockId, token)
-        local stock = App.config.points.stock
+        local stock, r = App.config.points.stock, Bridge.runtime()
         G.setStatus("Mengambil stock blok dari lantai...")
-        Movement.moveTo(stock.x, stock.y, stock.world, token)
+        -- Hitung SEBELUM jalan: blok yang terpungut otomatis di perjalanan juga dihitung.
         local before = refreshInventory(token)[blockId] or 0
+        local floor = Pnb.describeDrops(stock, STOCK_AREA, blockId)
+        Movement.moveTo(stock.x, stock.y, stock.world, token)
         local _, skipped = Drops.collectArea(stock, { blockId }, token, STOCK_AREA, {
             onTrip = function() G.setStatus("Mengambil stock: jalan ke tumpukan blok...") end })
         local gained = (refreshInventory(token)[blockId] or 0) - before
-        App.stockDebug = "+" .. gained .. " blok, " .. skipped .. " tumpukan tidak terjangkau"
+        local method = "pungut"
+        if gained == 0 then
+            method = "sapu lantai"
+            G.setStatus("Mengambil stock: menyapu lantai area stock...")
+            local hold = Movement.takeControls()
+            hold.pausePickup = false
+            for _, x in ipairs({ stock.x - STOCK_AREA.radius, stock.x + STOCK_AREA.radius, stock.x }) do
+                x = math.max(0, math.min(r.world.w - 1, x))
+                local ok, problem = pcall(Movement.moveTo, x, stock.y, stock.world, token)
+                if not ok and (type(problem) == "table" or tostring(problem):find("Stopped", 1, true)) then error(problem, 0) end
+            end
+            pause(0.5, token) -- tunggu balasan pickup bawaan game
+            gained = (refreshInventory(token)[blockId] or 0) - before
+        end
+        App.stockDebug = "+" .. gained .. " blok (" .. method .. "), " .. skipped .. " tumpukan tidak terjangkau; " .. floor
+        App.stockHistory = App.stockHistory or {}
+        table.insert(App.stockHistory, 1, os.date("%H:%M:%S") .. " " .. App.stockDebug)
+        App.stockHistory[4] = nil
         ensureAnchor(anchor, token)
         return gained
     end
@@ -229,9 +279,8 @@ return function(G)
             if count(blockId) == 0 and not existing then
                 Pnb.collect(anchor, pickupIds, token)
                 if count(blockId) == 0 then
-                    if App.config.pnb.autoStock and Pnb.takeStock(anchor, blockId, token) > 0 then
-                        refreshInventory(token)
-                    else
+                    if App.config.pnb.autoStock then Pnb.takeStock(anchor, blockId, token) end
+                    if not (App.config.pnb.autoStock and (refreshInventory(token)[blockId] or 0) > 0) then
                         G.setStatus(App.config.pnb.autoStock and "Selesai: stock blok di lantai habis."
                             or "Selesai: blok di tas habis. Nyalakan Auto take stock untuk ambil dari lantai.")
                         return

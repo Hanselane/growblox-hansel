@@ -24,8 +24,8 @@ local function setup(options)
     for id, n in pairs(server) do table.insert(inventory.slots, { id = id, n = n }) end
 
     local drops, nextUid, hits = {}, 1, {}
-    local function spawn(id, n, x, y) table.insert(drops, { uid = nextUid, id = id, n = n, x = x, y = y, readyAt = 0 }); nextUid = nextUid + 1 end
-    for _, d in ipairs(options.floor or {}) do spawn(d.id, d.n, d.x, d.y) end
+    local function spawn(id, n, x, y, display) table.insert(drops, { uid = nextUid, id = id, n = n, x = x, y = y, readyAt = 0, display = display }); nextUid = nextUid + 1 end
+    for _, d in ipairs(options.floor or {}) do spawn(d.id, d.n, d.x, d.y, d.display) end
     world.dropList = function() return drops end
     world.takeDrop = function(uid, want)
         for _, drop in ipairs(drops) do
@@ -108,6 +108,14 @@ local function setup(options)
             if avatar.vx < target then avatar.vx = math.min(target, avatar.vx + 48 * dt)
             elseif avatar.vx > target then avatar.vx = math.max(target, avatar.vx - 48 * dt) end
             avatar.x = math.max(0.3, math.min(world.w - 0.3, avatar.x + avatar.vx * dt))
+            if options.native then -- pickup bawaan game: badan menyentuh drop
+                for _, drop in ipairs(drops) do
+                    if math.abs(drop.x - avatar.x) < 0.6 and not drop.taking then
+                        local got = world.takeDrop(drop.uid, drop.n)
+                        if got and got > 0 then world.dropTaken(drop.uid, drop.n - got); break end
+                    end
+                end
+            end
             S.task.wait(dt)
         end
     end)
@@ -167,6 +175,18 @@ T.test("Auto take stock: stock tersebar, server cuma terima pungut dari dekat", 
     T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
     T.eq(sim.App.stats.broken, 8, "1 + 7 blok dari 3 tumpukan di area stock")
     T.eq(#sim.drops >= 1 and sim.drops[1].x == 15.5, true, "tumpukan di luar area (x 15) tidak diambil")
+end)
+T.test("Auto take stock: drop yang tidak bisa dipungut lewat server -> sapu lantai, pickup bawaan game", function()
+    local sim = setup({ blocks = 1, autoStock = true, native = true, stock = { world = "PNBW", x = 3, y = 9 },
+        floor = { { id = BLOCK, n = 3, x = 1.5, y = 9.5, display = true }, { id = BLOCK, n = 2, x = 7.5, y = 9.5, display = true } } })
+    sim.G.Jobs.start("pnb")
+    waitJob(sim, 400)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.App.stats.broken, 6, "1 + 5 blok hasil sapu lantai")
+    local history = table.concat(sim.App.stockHistory, "\n")
+    T.eq(history:find("+3 blok (sapu lantai)", 1, true) ~= nil, true, history)
+    T.eq(history:find("display", 1, true) ~= nil, true, "flag drop tercatat: " .. history)
 end)
 T.test("Perekam menampilkan panggilan jarang walau ada noise per frame", function()
     local sim = setup()
