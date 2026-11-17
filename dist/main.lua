@@ -1,5 +1,5 @@
--- Growblox Hansel v0.3.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.3.3"
+-- Growblox Hansel v0.3.4. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.4"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -19,7 +19,7 @@ Core.LIMITS = {
     placeDelay = { 0.15, 2, 0.2 }, punchDelay = { 0.22, 2, 0.24 },
     collectDelay = { 0, 5, 0.1 }, actionTimeout = { 5, 30, 10 },
     moveTimeout = { 5, 90, 30 }, seedThreshold = { 1, 200, 200 },
-    collectRange = { 0.5, 5, 1.5 },
+    collectRange = { 0.5, 5, 2 },
 }
 Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false }
 
@@ -677,6 +677,13 @@ return function(G)
 
     function Net.idle()
         assert(App.alive, "Script sudah di-unload.")
+        -- Auto Collect (saat idle) sedang mungut: minta berhenti & tunggu sebentar (maks 3 detik).
+        if App.autoCollecting then
+            App.autoCollectHold = true
+            local deadline = os.clock() + 3
+            while App.autoCollecting and os.clock() < deadline do task.wait(0.05) end
+            App.autoCollectHold = false
+        end
         assert(not App.job and not App.configuring and App.pending == 0,
             "Stop task yang jalan dan tunggu request selesai dulu.")
     end
@@ -2053,19 +2060,23 @@ return function(G)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)
             Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
-            local attempts, retryAt, deadline = {}, {}, os.clock() + App.config.options.actionTimeout
+            -- ids = "all" -> semua item (Auto Collect). options.attempts boleh dibawa antar panggilan
+            -- supaya drop yang terus ditolak server (kejauhan) tidak di-spam.
+            local attempts, retryAt, deadline = options.attempts or {}, {}, os.clock() + App.config.options.actionTimeout
             local collected, gemsTaken, skipped = {}, 0, 0
             local wanted = {}
-            for _, id in ipairs(ids) do wanted[id] = true end
+            local all = ids == "all"
+            if not all then for _, id in ipairs(ids) do wanted[id] = true end end
             local function nearby(drop)
                 return not drop.display and not drop.pending and type(drop.uid) == "number"
-                    and type(drop.n) == "number" and drop.n > 0 and not drop.taking and wanted[drop.id]
+                    and type(drop.n) == "number" and drop.n > 0 and not drop.taking and (all or wanted[drop.id])
                     and type(drop.x) == "number" and type(drop.y) == "number"
                     and math.abs(drop.x - (anchor.x + 0.5)) <= radius
                     and drop.y >= anchor.y - up and drop.y <= anchor.y + down
             end
             while true do
                 worldCheck(anchor.world, token)
+                if options.stopIf and options.stopIf() then return collected, skipped end
                 if options.onEachRound then options.onEachRound() end
                 local targets, waiting = {}, false
                 skipped = 0
@@ -3148,6 +3159,44 @@ return function(G)
         ensureAnchor(anchor, token)
     end
 
+    ---------------------------------------------------------------- Auto Collect (saat tidak ada task)
+    -- Tiap 0.3 detik: kalau ada item di lantai dalam jangkauan karakter, pungut (tanpa jalan).
+    -- Server Growblox menolak pungut dari jauh; drop yang ditolak 3x dilewati selama 15 detik.
+    local autoAttempts, autoReset = {}, 0
+    function Pnb.autoCollectTick()
+        local options = App.config and App.config.options
+        if not (App.alive and options and options.autoCollect) or App.job or App.pending > 0
+            or App.configuring or App.recording or App.autoCollectHold or App.teleporting then return false end
+        if os.clock() > autoReset then autoAttempts, autoReset = {}, os.clock() + 15 end
+        local okRuntime, r = pcall(Bridge.runtime)
+        if not okRuntime or type(r) ~= "table" or not r.world or not r.inventory then return false end
+        local okPos, state = pcall(position)
+        if not okPos or type(state) ~= "table" then return false end
+        local range = options.collectRange
+        local here = { world = r.world.name, x = math.floor(state.x), y = math.floor(state.y - 0.01) }
+        local any = false
+        for _, drop in pairs(r.world.dropList()) do
+            if not drop.display and not drop.taking and type(drop.uid) == "number" and type(drop.n) == "number"
+                and drop.n > 0 and type(drop.x) == "number" and type(drop.y) == "number"
+                and (autoAttempts[drop.uid] or 0) < 3
+                and math.abs(drop.x - (here.x + 0.5)) <= range and drop.y >= here.y - range and drop.y <= here.y + range
+                and (drop.id == Drops.GEM or r.inventory:room(drop.id) > 0) then any = true; break end
+        end
+        if not any then return false end
+        App.autoCollecting = true
+        local ok, got = pcall(Drops.collectNear, here, "all", nil, { radius = range, up = range, down = range,
+            attempts = autoAttempts, stopIf = function() return App.autoCollectHold or App.job ~= nil or not App.alive end })
+        App.autoCollecting = false
+        if ok then
+            local n = 0
+            for _, amount in pairs(got or {}) do n = n + amount end
+            if n > 0 then App.autoCollectInfo = "terakhir +" .. n .. " item" end
+        else
+            App.autoCollectInfo = "error: " .. tostring(got)
+        end
+        return ok
+    end
+
     ---------------------------------------------------------------- loop utama
     function Pnb.run(token)
         local r = Bridge.runtime()
@@ -3192,8 +3241,16 @@ return function(G)
                 if tileAt(point.x, point.y) == blockId then breakTile(anchor, point, blockId, token) end
             end
             assert(worked, "Semua tile PNB terhalang blok lain. Kosongkan tile yang dipilih atau pilih tile lain.")
-            G.setStatus("Collecting gems, seeds, and returned blocks...")
-            Drops.collectNear(anchor, pickupIds, token, GRID_AREA)
+            if App.config.options.autoCollect then
+                -- Auto Collect nyala: pungut SEMUA item di area PNB + jangkauan Auto Collect.
+                G.setStatus("Auto collect: memungut semua item di sekitar...")
+                local range = App.config.options.collectRange
+                Drops.collectNear(anchor, "all", token, { radius = math.max(GRID_AREA.radius, range),
+                    up = math.max(GRID_AREA.up, range), down = math.max(GRID_AREA.down, range) })
+            else
+                G.setStatus("Collecting gems, seeds, and returned blocks...")
+                Drops.collectNear(anchor, pickupIds, token, GRID_AREA)
+            end
         end
     end
 
@@ -3456,6 +3513,15 @@ return function(G)
             Value = { Min = Core.LIMITS.punchDelay[1], Max = Core.LIMITS.punchDelay[2], Default = App.config.options.punchDelay },
             Callback = function(value) setOption(function() App.config.options.punchDelay = tonumber(value) end) end })
 
+        pcall(function() tab:Section({ Title = "Auto Collect" }) end)
+        controls.autoCollect = tab:Toggle({ Title = "Auto Collect", Value = App.config.options.autoCollect,
+            Desc = "Pungut semua item (blok, seed, gem, dll.) di sekitar karakter. Jalan sendiri, juga ikut saat PNB.",
+            Callback = function(enabled) setOption(function() App.config.options.autoCollect = enabled == true end) end })
+        tab:Slider({ Title = "Jangkauan collect (tile)", Step = 0.5,
+            Value = { Min = Core.LIMITS.collectRange[1], Max = Core.LIMITS.collectRange[2], Default = App.config.options.collectRange },
+            Callback = function(value) setOption(function() App.config.options.collectRange = tonumber(value) end) end })
+
+        pcall(function() tab:Section({ Title = "Stock" }) end)
         controls.stock = tab:Paragraph({ Title = "Stock position", Desc = "Belum diset" })
         tab:Button({ Title = "Set stock position here", Desc = "Berdiri di tempat blok stock berserakan di lantai.",
             Callback = UI.action(function()
@@ -3493,6 +3559,12 @@ return function(G)
         syncing = false
         Pnb.refreshTab()
         table.insert(G.onConnected, function() pcall(refreshBlocks); pcall(Pnb.refreshTab) end)
+        task.spawn(function()
+            while App.alive do
+                task.wait(0.3)
+                pcall(Pnb.autoCollectTick)
+            end
+        end)
     end
 
     return Pnb
@@ -3632,6 +3704,8 @@ return function(modules, VERSION)
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
+            "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
+                .. tostring(App.config and App.config.options.collectRange) .. ", " .. tostring(App.autoCollectInfo or "-"),
             "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
             "PNB: blok " .. tostring(App.config.blockId) .. ", " .. #App.config.pnb.tiles .. " tile, auto stock "
                 .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop) .. ", balik ke spot " .. (App.pnbRecoveries or 0) .. "x",

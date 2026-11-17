@@ -128,6 +128,8 @@ return function(modules, VERSION)
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
+            "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
+                .. tostring(App.config and App.config.options.collectRange) .. ", " .. tostring(App.autoCollectInfo or "-"),
             "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
             "PNB: blok " .. tostring(App.config.blockId) .. ", " .. #App.config.pnb.tiles .. " tile, auto stock "
                 .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop) .. ", balik ke spot " .. (App.pnbRecoveries or 0) .. "x",

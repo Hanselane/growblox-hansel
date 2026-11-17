@@ -13,7 +13,7 @@ Core.LIMITS = {
     placeDelay = { 0.15, 2, 0.2 }, punchDelay = { 0.22, 2, 0.24 },
     collectDelay = { 0, 5, 0.1 }, actionTimeout = { 5, 30, 10 },
     moveTimeout = { 5, 90, 30 }, seedThreshold = { 1, 200, 200 },
-    collectRange = { 0.5, 5, 1.5 },
+    collectRange = { 0.5, 5, 2 },
 }
 Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false }
 

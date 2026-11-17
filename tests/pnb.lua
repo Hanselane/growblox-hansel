@@ -203,6 +203,38 @@ T.test("Perekam menyadap kiriman ke server (FireServer) walau game pakai fungsi 
     T.eq(text:find("Sadap server: aktif", 1, true) ~= nil, true, text)
     T.eq(text:find('"Move"', 1, true) == nil, true, "noise disembunyikan: " .. text)
 end)
+T.test("Auto Collect saat idle: pungut semua item dalam jangkauan, yang jauh dibiarkan", function()
+    local sim = setup({ floor = { { id = BLOCK, n = 4, x = 11.5, y = 9.5 }, { id = 18, n = 2, x = 9.5, y = 9.5 },
+        { id = SEED, n = 3, x = 17.5, y = 9.5 } } })
+    sim.App.config.options.autoCollect, sim.App.config.options.collectRange = true, 2
+    local done = false
+    sim.S.task.spawn(function() sim.G.Pnb.autoCollectTick(); done = true end)
+    sim.S.run(5)
+    sim.S.restore()
+    T.eq(done, true, "tick selesai")
+    T.eq(sim.server[BLOCK], 3 + 4, "blok dipungut")
+    T.eq(sim.server[18], 1 + 2, "item lain ikut dipungut")
+    T.eq(sim.server[SEED], nil, "seed di x 17 di luar jangkauan")
+    T.eq(sim.G.Pnb.autoCollectTick(), false, "tidak ada yang bisa dipungut = tidak kirim request")
+end)
+T.test("Auto Collect mati / ada task jalan: tidak memungut", function()
+    local sim = setup({ floor = { { id = BLOCK, n = 4, x = 11.5, y = 9.5 } } })
+    sim.App.config.options.autoCollect = false
+    T.eq(sim.G.Pnb.autoCollectTick(), false)
+    sim.App.config.options.autoCollect, sim.App.job = true, "pnb"
+    T.eq(sim.G.Pnb.autoCollectTick(), false)
+    sim.S.restore()
+    T.eq(sim.server[BLOCK], 3)
+end)
+T.test("PNB + Auto Collect: item lain di sekitar ikut dipungut", function()
+    local sim = setup({ blocks = 2, floor = { { id = 18, n = 2, x = 11.5, y = 9.5 } } })
+    sim.App.config.options.autoCollect = true
+    sim.G.Jobs.start("pnb")
+    waitJob(sim, 120)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.server[18], 3, "item 18 ikut dipungut")
+end)
 T.test("Karakter terdorong dari spot: jalan balik dan PNB lanjut", function()
     local sim = setup({ blocks = 4 })
     sim.G.Jobs.start("pnb")

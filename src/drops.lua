@@ -69,19 +69,23 @@ return function(G)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)
             Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
-            local attempts, retryAt, deadline = {}, {}, os.clock() + App.config.options.actionTimeout
+            -- ids = "all" -> semua item (Auto Collect). options.attempts boleh dibawa antar panggilan
+            -- supaya drop yang terus ditolak server (kejauhan) tidak di-spam.
+            local attempts, retryAt, deadline = options.attempts or {}, {}, os.clock() + App.config.options.actionTimeout
             local collected, gemsTaken, skipped = {}, 0, 0
             local wanted = {}
-            for _, id in ipairs(ids) do wanted[id] = true end
+            local all = ids == "all"
+            if not all then for _, id in ipairs(ids) do wanted[id] = true end end
             local function nearby(drop)
                 return not drop.display and not drop.pending and type(drop.uid) == "number"
-                    and type(drop.n) == "number" and drop.n > 0 and not drop.taking and wanted[drop.id]
+                    and type(drop.n) == "number" and drop.n > 0 and not drop.taking and (all or wanted[drop.id])
                     and type(drop.x) == "number" and type(drop.y) == "number"
                     and math.abs(drop.x - (anchor.x + 0.5)) <= radius
                     and drop.y >= anchor.y - up and drop.y <= anchor.y + down
             end
             while true do
                 worldCheck(anchor.world, token)
+                if options.stopIf and options.stopIf() then return collected, skipped end
                 if options.onEachRound then options.onEachRound() end
                 local targets, waiting = {}, false
                 skipped = 0

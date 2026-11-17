@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.3**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.4**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -26,7 +26,8 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Fitur | Tab | Status |
 | --- | --- | --- |
 | Pondasi: connect, retry, simpan setting, loader GitHub | Settings | Selesai, dites di game (v0.1.0) |
-| Place & Break | Place & Break | Selesai (v0.3.0), dites offline. Auto drop seed menunggu hasil rekaman |
+| Place & Break | Place & Break | Selesai (v0.3.0), dites di game. Auto drop seed menunggu hasil rekaman |
+| Auto Collect | Place & Break | Selesai (v0.3.4), dites offline |
 | Planting | Planting | Selesai (v0.2.0), dites offline |
 | Harvest | Harvest | Belum |
 | Rotation | Rotation | Belum |
@@ -54,7 +55,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 
 | Tab | Isi |
 | --- | --- |
-| **Place & Break** | PNB dengan grid 5x5, hit delay, stock dari lantai, drop seed, perekam aksi game. |
+| **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dari lantai, drop seed, perekam aksi game. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | Panen farm dan simpan hasilnya ke Display Box. Belum dibuat. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
@@ -95,6 +96,15 @@ Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpil
 | `Semua tile PNB terhalang blok lain.` | Semua tile terpilih berisi blok lain; kosongkan atau pilih tile lain |
 | `Karakter bergeser; kembali ke posisi PNB...` | Karakter terdorong saat place/break; script jalan balik ke spot dan lanjut |
 | `Karakter terus bergeser dari posisi PNB` | Terdorong lebih dari 10 kali dalam 1 menit; PNB berhenti |
+
+### Auto Collect
+
+Toggle **Auto Collect** dan slider **Jangkauan collect (tile)** (0,5 sampai 5, bawaan 2) ada di tab Place & Break.
+
+- **Saat tidak ada task jalan**: tiap 0,3 detik, semua item di lantai (blok, seed, gem, item lain) dalam jangkauan karakter dipungut tanpa jalan. Item yang ditolak server 3x (biasanya kejauhan) dilewati selama 15 detik.
+- **Saat PNB jalan**: setelah memecah, PNB memungut semua item di area grid PNB atau jangkauan Auto Collect, mana yang lebih luas. Kalau Auto Collect mati, PNB cuma memungut blok, seed, dan gem di area grid.
+- Server Growblox menolak pungut dari jauh. Kalau item di pinggir jangkauan tidak terambil, kecilkan jangkauan atau berdiri lebih dekat.
+- Diagnostics menampilkan baris `Auto collect: on/off, jangkauan N, terakhir +N item`.
 
 ### Auto drop seed dan perekam aksi
 

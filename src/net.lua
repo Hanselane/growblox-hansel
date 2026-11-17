@@ -52,6 +52,13 @@ return function(G)
 
     function Net.idle()
         assert(App.alive, "Script sudah di-unload.")
+        -- Auto Collect (saat idle) sedang mungut: minta berhenti & tunggu sebentar (maks 3 detik).
+        if App.autoCollecting then
+            App.autoCollectHold = true
+            local deadline = os.clock() + 3
+            while App.autoCollecting and os.clock() < deadline do task.wait(0.05) end
+            App.autoCollectHold = false
+        end
         assert(not App.job and not App.configuring and App.pending == 0,
             "Stop task yang jalan dan tunggu request selesai dulu.")
     end
