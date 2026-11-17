@@ -80,6 +80,31 @@ T.test("hook tetap ketemu kalau fungsi game memegang pembungkus world (grid sama
     local text = table.concat(G.App.discoveryReport, "\n")
     T.eq(text:find("lewat grid", 1, true) ~= nil and text:find("langsung 0", 1, true) ~= nil, true, text)
 end)
+T.test("hook ketemu kalau world disimpan di tabel konteks (update Growblox 17 Nov)", function()
+    local G, game, S = setup()
+    local ctx = { world = game.world, other = 1 }
+    for fn, ups in pairs(game.meta.up) do
+        for i, v in ipairs(ups) do if v == game.world then ups[i] = ctx end end
+    end
+    local r = G.Bridge.discover()
+    S.restore()
+    T.eq(r.ready, true, "ready: " .. table.concat(r.issues, " "))
+    T.eq(r.body ~= nil and r.handlers.plantSeed ~= nil, true, "avatar + plantSeed")
+    local text = table.concat(G.App.discoveryReport, "\n")
+    T.eq(text:find("lewat konteks", 1, true) ~= nil and text:find("langsung 0", 1, true) ~= nil, true, text)
+end)
+T.test("connect menunggu kalau masih di world picker (nama world kosong)", function()
+    local G, game, S = setup()
+    game.world.name = ""
+    local retries = 0
+    S.task.spawn(function() G.Bridge.connect({ attempts = 5, delay = 1, onRetry = function() retries = retries + 1 end }) end)
+    S.run(1.5)
+    T.eq(G.App.runtime, nil, "belum tersambung di picker")
+    game.world.name = "NDJD"
+    S.run(3)
+    S.restore()
+    T.eq(G.App.runtime ~= nil and retries >= 1, true, "tersambung setelah masuk world")
+end)
 T.test("diagnostics detail muncul kalau hook hilang", function()
     local G, game, S = setup()
     for fn, ups in pairs(game.meta.up) do

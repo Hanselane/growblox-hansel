@@ -62,28 +62,61 @@ return function(G)
         return name
     end
     -- Fungsi "milik" world kalau upvalue-nya memegang tabel world itu (cara Clarissv).
-    -- Cadangan (v0.2.1): upvalue berupa tabel lain yang memegang GRID yang sama (world.fg).
-    -- Ini menangani kasus world yang ketemu adalah pembungkus/salinan dari world yang dipakai game.
-    local ownership = { direct = 0, grid = 0 }
+    -- Cadangan v0.2.2 (update Growblox 17 Nov 2026): upvalue berupa tabel KONTEKS yang menyimpan
+    -- world di salah satu field-nya (misal ctx.world). Cadangan v0.2.1: tabel lain yang memegang grid sama.
+    local ownership = { direct = 0, nested = 0, grid = 0 }
+    -- Field mana di tabel `value` yang berisi world? Dibaca mentah (tanpa metamethod), maks 256 field,
+    -- dan hasilnya di-cache per tabel supaya tabel besar (misal daftar item) tidak dibaca berulang.
+    local function holdsWorld(value, world, scan)
+        local cache = scan and scan.holds
+        if cache and cache[value] ~= nil then return cache[value] or nil end
+        local found, n = nil, 0
+        local ok = pcall(function()
+            for key, field in next, value do
+                n = n + 1
+                if n > 256 then break end
+                if field == world then found = key; break end
+            end
+        end)
+        if not ok then found = nil end
+        if cache then cache[value] = found or false end
+        return found
+    end
     local function owns(fn, world, scan)
-        local viaGrid = false
+        local nested, viaGrid = false, false
         for _, value in pairs(upvalues(fn, scan)) do
             if value == world then ownership.direct = ownership.direct + 1; return true end
-            if not viaGrid and type(value) == "table" and type(world.fg) == "table"
-                and rawget(value, "fg") == world.fg then viaGrid = true end
+            if type(value) == "table" then
+                if not nested and holdsWorld(value, world, scan) ~= nil then nested = true end
+                if not viaGrid and type(world.fg) == "table" and rawget(value, "fg") == world.fg then viaGrid = true end
+            end
         end
-        if viaGrid then ownership.grid = ownership.grid + 1 end
-        return viaGrid
+        if nested then ownership.nested = ownership.nested + 1; return true end
+        if viaGrid then ownership.grid = ownership.grid + 1; return true end
+        return false
     end
-    -- Ringkasan upvalue satu fungsi untuk diagnostics: tipe dan apakah mirip world.
+    -- Ringkasan upvalue satu fungsi untuk diagnostics.
     local function describeUpvalues(fn, world, scan)
         local parts = {}
         for _, value in pairs(upvalues(fn, scan)) do
             local kind = type(value)
             if kind == "table" then
+                local key = holdsWorld(value, world, scan)
                 if value == world then kind = "WORLD"
+                elseif key ~= nil then kind = "table(world di ." .. tostring(key) .. ")"
                 elseif rawget(value, "fg") ~= nil then kind = rawget(value, "fg") == world.fg and "table(fg sama)" or "table(fg beda)"
-                elseif type(rawget(value, "backpackNow")) == "function" then kind = "table(mirip world)" end
+                elseif type(rawget(value, "backpackNow")) == "function" then kind = "table(mirip world)"
+                else
+                    local names, n = {}, 0
+                    pcall(function()
+                        for k in next, value do
+                            n = n + 1
+                            if n > 6 then break end
+                            table.insert(names, tostring(k))
+                        end
+                    end)
+                    kind = "table{" .. table.concat(names, ",") .. (n > 6 and ",..." or "") .. "}"
+                end
             end
             table.insert(parts, kind)
             if #parts >= 12 then break end
@@ -287,7 +320,8 @@ return function(G)
         assert(type(X.getgc) == "function", "Executor harus punya getgc(true).")
         local scan, startedAt = newScan(), os.clock()
         App.discoveryReport = {}
-        ownership.direct, ownership.grid = 0, 0
+        ownership.direct, ownership.nested, ownership.grid = 0, 0, 0
+        scan.holds = {}
         App.startupStage = "Membaca objek game"
         task.wait()
         local registry, registrySource = resolveRegistry(scan)
@@ -406,13 +440,16 @@ return function(G)
             local named = {}
             for _, fn in ipairs(scan.functions) do
                 local name = functionName(fn, scan)
-                if name == "setTile" or name == "plantSeed" or name == "canPlace" then named[name] = (named[name] or 0) + 1 end
+                if name == "setTile" or name == "plantSeed" or name == "canPlace" then
+                    named[name] = (named[name] or 0) + 1
+                    if name == "setTile" and named[name] == 1 then report("Upvalue setTile: " .. describeUpvalues(fn, world, scan)) end
+                end
             end
             report(string.format("Fungsi bernama di GC: setTile %d, canPlace %d, plantSeed %d",
                 named.setTile or 0, named.canPlace or 0, named.plantSeed or 0))
             report("World name: " .. tostring(world.name) .. "; w/h: " .. tostring(world.w) .. "/" .. tostring(world.h))
         end
-        report("Kepemilikan: langsung " .. ownership.direct .. ", lewat grid " .. ownership.grid)
+        report("Kepemilikan: langsung " .. ownership.direct .. ", lewat konteks " .. ownership.nested .. ", lewat grid " .. ownership.grid)
         local runtime = { world = world, body = body, controls = controls[1], inventory = inventory, items = items,
             handlers = handlers, issues = issues, ready = #issues == 0, gemHud = gemHud,
             picker = findWorldPicker(world, entries, scan), respawn = respawn,
@@ -442,12 +479,13 @@ return function(G)
                 -- World ketemu, tapi tunggu avatar benar-benar siap sebelum dianggap tersambung.
                 local body = result.body
                 local state = body and body.state()
-                if not body or (state.active and not state.dead) then
+                local inWorld = result.world.name ~= nil and result.world.name ~= "" and not Bridge.pickerOpen(result)
+                if inWorld and (not body or (state.active and not state.dead)) then
                     App.runtime, App.connectionError = result, nil
                     App.connectAttempts = attempt
                     return result
                 end
-                result = "Your character is not ready yet."
+                result = inWorld and "Your character is not ready yet." or "Still in the world picker. Enter a world first."
             end
             lastError = tostring(result)
             App.connectionError = lastError
