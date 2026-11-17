@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.7**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.8**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -14,6 +14,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Tab di jendela](#tab-di-jendela)
 - [Place & Break](#place--break)
 - [Planting](#planting)
+- [Settings](#settings)
 - [Menyambung ke game](#menyambung-ke-game)
 - [Data yang disimpan](#data-yang-disimpan)
 - [Troubleshooting](#troubleshooting)
@@ -59,7 +60,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | Panen farm dan simpan hasilnya ke Display Box. Belum dibuat. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
-| **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, **Unload script**, dan log aktivitas. |
+| **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, Anti-AFK, Rejoin world and return to PNB, jeda dan batas waktu, **Unload script**, dan log aktivitas. |
 
 ## Place & Break
 
@@ -162,6 +163,23 @@ Sebelum masuk world, progress disimpan: world ke berapa, baris terakhir, tile ya
 Kalau tidak lanjut otomatis, jalankan loader lagi lalu tekan **Resume planting**. Checkpoint berlaku 6 jam.
 
 Kalau task berhenti saat **mengambil seed dari box**, script menolak resume karena tidak tahu apakah seed sudah masuk tas. Cek tas dan box, lalu tekan **Clear saved planting** dan mulai lagi.
+
+## Settings
+
+Diadaptasi dari tab Settings Claris Growblox v0.1.43. Setting cuma bisa diubah saat tidak ada task jalan, dan tersimpan di profil.
+
+| Setting | Bawaan | Fungsi |
+| --- | --- | --- |
+| **Anti-AFK** | On | Saat Roblox mendeteksi idle, script mengirim klik virtual (`VirtualUser`), maksimal sekali per menit, supaya tidak di-kick karena AFK. |
+| **Rejoin world and return to PNB** | On | Kalau terlempar ke world picker, avatar mati, atau pindah server saat PNB: masuk lagi ke world PNB (maks 3 percobaan), jalan balik ke spot, lalu lanjut. Juga dipakai Planting untuk lanjut dari checkpoint. |
+| **Jeda setelah place** | 0,2 dtk | Jeda setelah menaruh blok/seed. |
+| **Waktu tunggu drop** | 0,1 dtk | Jeda sebelum memungut drop. |
+| **Batas waktu request server** | 10 dtk | Request ke server yang lebih lama dari ini dianggap gagal. |
+| **Batas waktu jalan** | 30 dtk | Perjalanan karakter yang lebih lama dari ini dianggap gagal. |
+
+Hit delay dan batas seed ada di tab Place & Break.
+
+Pindah server saat PNB: kalau executor punya `queue_on_teleport`, script dimuat ulang otomatis di server baru dan PNB dilanjutkan dari checkpoint (spot PNB tersimpan, berlaku 6 jam). Diagnostics menampilkan baris `Anti-AFK` dan `Rejoin & balik ke PNB` (berapa kali masuk ulang).
 
 ## Menyambung ke game
 

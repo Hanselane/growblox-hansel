@@ -199,6 +199,63 @@ return function(G)
         return ok
     end
 
+    ---------------------------------------------------------------- rejoin & resume
+    -- Adaptasi Clarissv v0.1.43: savePNBResume, refreshPNBCheckpoint, classifyPNBFault, recoverPNB.
+    -- Setting "Rejoin world and return to PNB" (options.autoRejoin): kalau terlempar ke world picker,
+    -- avatar mati/respawn, atau pindah server, masuk lagi ke world PNB lalu jalan balik ke spot.
+    local lastResumeSave = -math.huge
+    function Pnb.saveResume()
+        State.saveCheckpoint("pnb", { anchor = App.config.points.pnb })
+        lastResumeSave = os.clock()
+    end
+    function Pnb.clearResume() State.clearCheckpoint("pnb") end
+    -- Diperbarui tiap 2 menit supaya checkpoint tidak dianggap basi saat PNB jalan lama.
+    local function refreshResume()
+        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastResumeSave >= 120 then
+            local ok, issue = pcall(Pnb.saveResume)
+            if not ok then App.pnbResumeError = tostring(issue) end
+        end
+    end
+
+    -- Error biasa saat aksi bisa jadi efek world picker/avatar mati yang belum kelihatan.
+    -- Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error "recoverable".
+    function Pnb.classifyFault(problem, token)
+        if type(problem) == "table" and problem.recoverable then return problem end
+        if tostring(problem):find("Stopped", 1, true) then return problem end
+        Movement.releaseControls()
+        local name, deadline = App.config.points.pnb.world, os.clock() + 1.5
+        repeat
+            checkpoint(token)
+            local r = Bridge.runtime()
+            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
+                return Bridge.recoverable("Kembali ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+            end
+            if r.world.name ~= name then return problem end
+            local state = r.body and r.body.state()
+            if state and (not state.active or state.dead) then
+                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
+            end
+            if os.clock() >= deadline then return problem end
+            pause(0.1, token)
+        until false
+    end
+
+    -- Masuk lagi ke world PNB (lewat world picker, bisa pindah server) lalu jalan ke spot.
+    function Pnb.returnToSpot(token)
+        local anchor = App.config.points.pnb
+        App.recovering = true
+        App.pnbRejoins = (App.pnbRejoins or 0) + 1
+        G.setStatus("Masuk lagi ke " .. anchor.world .. "...")
+        Movement.enterWorld(anchor.world, token, { save = Pnb.saveResume, label = "Place & Break",
+            resumeButton = "Place & Break" })
+        Movement.takeControls()
+        refreshInventory(token)
+        G.setStatus("Jalan balik ke spot PNB...")
+        Movement.moveTo(anchor.x, anchor.y, anchor.world, token)
+        App.recovering = false
+        G.setStatus("Sudah di spot PNB. Lanjut Place & Break...")
+    end
+
     ---------------------------------------------------------------- loop utama
     function Pnb.run(token)
         local r = Bridge.runtime()
@@ -209,10 +266,12 @@ return function(G)
         if seedId then table.insert(pickupIds, seedId) end
         worldCheck(anchor.world, token)
         ensureAnchor(anchor, token)
+        if App.config.options.autoRejoin then Pnb.saveResume(); Movement.queueResume() end
         G.setStatus("PNB mulai di " .. anchor.world .. " (" .. anchor.x .. ", " .. anchor.y .. "), " .. #App.config.pnb.tiles .. " tile.")
         while true do
             checkpoint(token)
             worldCheck(anchor.world, token)
+            refreshResume()
             holdAnchor(anchor, token)
             refreshInventory(token)
             if seedId and App.config.pnb.autoDrop and count(seedId) >= App.config.options.seedThreshold then
@@ -249,14 +308,52 @@ return function(G)
 
     G.Jobs.register("pnb", {
         label = "Place & Break",
-        prepare = function(r)
+        prepare = function(r, saved)
             assert(r.body and r.controls and r.handlers.setTile and r.handlers.hit and r.handlers.canPlace,
                 "Hook place/break tidak tersedia. Copy diagnostics dari Settings.")
             -- Posisi PNB = tempat karakter berdiri saat toggle dinyalakan (seperti Crusader).
-            App.config.points.pnb = Pnb.standingTile()
+            -- Resume setelah pindah server: pakai spot dari checkpoint.
+            if saved and saved.anchor then App.config.points.pnb = saved.anchor
+            else App.config.points.pnb = Pnb.standingTile() end
         end,
-        run = function(token) Pnb.run(token) end,
+        -- Sama seperti Clarissv: error "recoverable" + setting Rejoin nyala = masuk lagi ke world,
+        -- balik ke spot, lanjut PNB. Pemulihan yang terganggu 3x berturut-turut = berhenti.
+        run = function(token, saved)
+            local anchor = App.config.points.pnb
+            if saved then
+                local r = Bridge.runtime()
+                if r.world.name ~= anchor.world or Bridge.pickerOpen(r) then Pnb.returnToSpot(token) end
+            end
+            while true do
+                local completed, problem = pcall(Pnb.run, token)
+                if completed then break end
+                checkpoint(token)
+                problem = Pnb.classifyFault(problem, token)
+                if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
+                    error(problem, 0)
+                end
+                local interruptions = 0
+                while true do
+                    local recovered, nextProblem = pcall(Pnb.returnToSpot, token)
+                    if recovered then break end
+                    checkpoint(token)
+                    if type(nextProblem) ~= "table" or not nextProblem.recoverable then error(nextProblem, 0) end
+                    interruptions = interruptions + 1
+                    assert(interruptions < 3, "Pemulihan terganggu 3x. Cek world tersimpan dan koneksi.")
+                end
+            end
+            Pnb.clearResume()
+        end,
+        clear = function() Pnb.clearResume() end,
     })
+    -- Auto-resume setelah pindah server (loader dijalankan ulang lewat queue_on_teleport).
+    table.insert(G.resumeHandlers, function()
+        local record = State.loadCheckpoint("pnb")
+        if not record or type(record.data) ~= "table" or type(record.data.anchor) ~= "table" then return false end
+        App.config, App.profile = record.config, Core.profileName(record.profile)
+        G.Jobs.start("pnb", record.data)
+        return true
+    end)
 
     ---------------------------------------------------------------- perekam aksi game
     -- Bungkus sementara semua fungsi milik world dan touch controls, lalu catat setiap panggilan

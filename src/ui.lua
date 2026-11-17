@@ -63,9 +63,57 @@ return function(G)
             if type(G.exec.setclipboard) == "function" then G.exec.setclipboard(text); G.notify("Diagnostics di-copy.")
             else print(text); G.notify("Diagnostics dicetak ke console.") end
         end })
+        UI.buildSettings(s)
         s:Button({ Title = "Unload script", Callback = function() G.unload() end })
         UI.log = s:Paragraph({ Title = "Aktivitas terakhir", Desc = "-" })
         return window
+    end
+
+    -- Setting umum (adaptasi tab Settings Clarissv v0.1.43). Hanya bisa diubah saat tidak ada task.
+    -- Hit delay dan batas seed ada di tab Place & Break.
+    function UI.buildSettings(s)
+        local Core, State, Net = G.Core, G.State, G.Net
+        UI.settings = {}
+        pcall(function() s:Section({ Title = "Settings" }) end)
+        for _, info in ipairs({
+            { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
+            { "autoRejoin", "Rejoin world and return to PNB", "Terlempar ke world picker, avatar mati, atau pindah server: masuk lagi ke world PNB, jalan balik ke spot, lanjut. Juga lanjut Planting dari checkpoint." },
+        }) do
+            local key = info[1]
+            UI.settings[key] = s:Toggle({ Title = info[2], Desc = info[3], Value = App.config.options[key],
+                Callback = function(value)
+                    if App.syncingSettings then return end
+                    local ok, message = pcall(function()
+                        Net.idle()
+                        App.config.options[key] = value == true
+                        if key == "antiAFK" and value then G.installAntiAFK() end
+                        State.saveSession()
+                    end)
+                    if not ok then
+                        G.notify("Stop task dulu sebelum mengubah setting.")
+                        App.syncingSettings = true
+                        pcall(function() UI.settings[key]:Set(App.config.options[key], false, false) end)
+                        App.syncingSettings = false
+                    end
+                end })
+        end
+        for _, info in ipairs({
+            { "placeDelay", "Jeda setelah place (detik)", 0.05 }, { "collectDelay", "Waktu tunggu drop (detik)", 0.05 },
+            { "actionTimeout", "Batas waktu request server (detik)", 1 }, { "moveTimeout", "Batas waktu jalan (detik)", 1 },
+        }) do
+            local key, limits = info[1], Core.LIMITS[info[1]]
+            UI.settings[key] = s:Slider({ Title = info[2], Step = info[3],
+                Value = { Min = limits[1], Max = limits[2], Default = App.config.options[key] },
+                Callback = function(value)
+                    if App.syncingSettings then return end
+                    local ok = pcall(function()
+                        Net.idle()
+                        App.config.options[key] = tonumber(value)
+                        State.saveSession()
+                    end)
+                    if not ok then G.notify("Stop task dulu sebelum mengubah setting.") end
+                end })
+        end
     end
 
     -- Dipanggil berkala dari main.lua.

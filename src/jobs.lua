@@ -7,7 +7,7 @@ return function(G)
 
     -- spec = {
     --   label        nama di status, misal "Planting"
-    --   prepare(r)   cek hook game yang dibutuhkan (opsional)
+    --   prepare(r, saved)   cek hook game yang dibutuhkan (opsional; saved = checkpoint resume)
     --   run(token, saved)   isi task; selesai normal = return, gagal = error
     --   clear()      hapus checkpoint fitur ini (dipanggil saat Stop / task lain mulai)
     -- }
@@ -29,7 +29,7 @@ return function(G)
         Net.idle()
         local spec = assert(Jobs.specs[mode], "Task tidak dikenal: " .. tostring(mode))
         local r = Bridge.runtime()
-        if spec.prepare then spec.prepare(r) end
+        if spec.prepare then spec.prepare(r, saved) end
         Core.checkSetup(App.config, mode, r.items)
         for other, otherSpec in pairs(Jobs.specs) do
             if other ~= mode and otherSpec.clear then pcall(otherSpec.clear) end

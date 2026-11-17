@@ -1,5 +1,5 @@
--- Growblox Hansel v0.3.7. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.3.7"
+-- Growblox Hansel v0.3.8. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.8"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -2207,7 +2207,7 @@ return function(G)
 
     -- spec = {
     --   label        nama di status, misal "Planting"
-    --   prepare(r)   cek hook game yang dibutuhkan (opsional)
+    --   prepare(r, saved)   cek hook game yang dibutuhkan (opsional; saved = checkpoint resume)
     --   run(token, saved)   isi task; selesai normal = return, gagal = error
     --   clear()      hapus checkpoint fitur ini (dipanggil saat Stop / task lain mulai)
     -- }
@@ -2229,7 +2229,7 @@ return function(G)
         Net.idle()
         local spec = assert(Jobs.specs[mode], "Task tidak dikenal: " .. tostring(mode))
         local r = Bridge.runtime()
-        if spec.prepare then spec.prepare(r) end
+        if spec.prepare then spec.prepare(r, saved) end
         Core.checkSetup(App.config, mode, r.items)
         for other, otherSpec in pairs(Jobs.specs) do
             if other ~= mode and otherSpec.clear then pcall(otherSpec.clear) end
@@ -2355,9 +2355,57 @@ return function(G)
             if type(G.exec.setclipboard) == "function" then G.exec.setclipboard(text); G.notify("Diagnostics di-copy.")
             else print(text); G.notify("Diagnostics dicetak ke console.") end
         end })
+        UI.buildSettings(s)
         s:Button({ Title = "Unload script", Callback = function() G.unload() end })
         UI.log = s:Paragraph({ Title = "Aktivitas terakhir", Desc = "-" })
         return window
+    end
+
+    -- Setting umum (adaptasi tab Settings Clarissv v0.1.43). Hanya bisa diubah saat tidak ada task.
+    -- Hit delay dan batas seed ada di tab Place & Break.
+    function UI.buildSettings(s)
+        local Core, State, Net = G.Core, G.State, G.Net
+        UI.settings = {}
+        pcall(function() s:Section({ Title = "Settings" }) end)
+        for _, info in ipairs({
+            { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
+            { "autoRejoin", "Rejoin world and return to PNB", "Terlempar ke world picker, avatar mati, atau pindah server: masuk lagi ke world PNB, jalan balik ke spot, lanjut. Juga lanjut Planting dari checkpoint." },
+        }) do
+            local key = info[1]
+            UI.settings[key] = s:Toggle({ Title = info[2], Desc = info[3], Value = App.config.options[key],
+                Callback = function(value)
+                    if App.syncingSettings then return end
+                    local ok, message = pcall(function()
+                        Net.idle()
+                        App.config.options[key] = value == true
+                        if key == "antiAFK" and value then G.installAntiAFK() end
+                        State.saveSession()
+                    end)
+                    if not ok then
+                        G.notify("Stop task dulu sebelum mengubah setting.")
+                        App.syncingSettings = true
+                        pcall(function() UI.settings[key]:Set(App.config.options[key], false, false) end)
+                        App.syncingSettings = false
+                    end
+                end })
+        end
+        for _, info in ipairs({
+            { "placeDelay", "Jeda setelah place (detik)", 0.05 }, { "collectDelay", "Waktu tunggu drop (detik)", 0.05 },
+            { "actionTimeout", "Batas waktu request server (detik)", 1 }, { "moveTimeout", "Batas waktu jalan (detik)", 1 },
+        }) do
+            local key, limits = info[1], Core.LIMITS[info[1]]
+            UI.settings[key] = s:Slider({ Title = info[2], Step = info[3],
+                Value = { Min = limits[1], Max = limits[2], Default = App.config.options[key] },
+                Callback = function(value)
+                    if App.syncingSettings then return end
+                    local ok = pcall(function()
+                        Net.idle()
+                        App.config.options[key] = tonumber(value)
+                        State.saveSession()
+                    end)
+                    if not ok then G.notify("Stop task dulu sebelum mengubah setting.") end
+                end })
+        end
     end
 
     -- Dipanggil berkala dari main.lua.
@@ -3253,6 +3301,63 @@ return function(G)
         return ok
     end
 
+    ---------------------------------------------------------------- rejoin & resume
+    -- Adaptasi Clarissv v0.1.43: savePNBResume, refreshPNBCheckpoint, classifyPNBFault, recoverPNB.
+    -- Setting "Rejoin world and return to PNB" (options.autoRejoin): kalau terlempar ke world picker,
+    -- avatar mati/respawn, atau pindah server, masuk lagi ke world PNB lalu jalan balik ke spot.
+    local lastResumeSave = -math.huge
+    function Pnb.saveResume()
+        State.saveCheckpoint("pnb", { anchor = App.config.points.pnb })
+        lastResumeSave = os.clock()
+    end
+    function Pnb.clearResume() State.clearCheckpoint("pnb") end
+    -- Diperbarui tiap 2 menit supaya checkpoint tidak dianggap basi saat PNB jalan lama.
+    local function refreshResume()
+        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastResumeSave >= 120 then
+            local ok, issue = pcall(Pnb.saveResume)
+            if not ok then App.pnbResumeError = tostring(issue) end
+        end
+    end
+
+    -- Error biasa saat aksi bisa jadi efek world picker/avatar mati yang belum kelihatan.
+    -- Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error "recoverable".
+    function Pnb.classifyFault(problem, token)
+        if type(problem) == "table" and problem.recoverable then return problem end
+        if tostring(problem):find("Stopped", 1, true) then return problem end
+        Movement.releaseControls()
+        local name, deadline = App.config.points.pnb.world, os.clock() + 1.5
+        repeat
+            checkpoint(token)
+            local r = Bridge.runtime()
+            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
+                return Bridge.recoverable("Kembali ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+            end
+            if r.world.name ~= name then return problem end
+            local state = r.body and r.body.state()
+            if state and (not state.active or state.dead) then
+                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
+            end
+            if os.clock() >= deadline then return problem end
+            pause(0.1, token)
+        until false
+    end
+
+    -- Masuk lagi ke world PNB (lewat world picker, bisa pindah server) lalu jalan ke spot.
+    function Pnb.returnToSpot(token)
+        local anchor = App.config.points.pnb
+        App.recovering = true
+        App.pnbRejoins = (App.pnbRejoins or 0) + 1
+        G.setStatus("Masuk lagi ke " .. anchor.world .. "...")
+        Movement.enterWorld(anchor.world, token, { save = Pnb.saveResume, label = "Place & Break",
+            resumeButton = "Place & Break" })
+        Movement.takeControls()
+        refreshInventory(token)
+        G.setStatus("Jalan balik ke spot PNB...")
+        Movement.moveTo(anchor.x, anchor.y, anchor.world, token)
+        App.recovering = false
+        G.setStatus("Sudah di spot PNB. Lanjut Place & Break...")
+    end
+
     ---------------------------------------------------------------- loop utama
     function Pnb.run(token)
         local r = Bridge.runtime()
@@ -3263,10 +3368,12 @@ return function(G)
         if seedId then table.insert(pickupIds, seedId) end
         worldCheck(anchor.world, token)
         ensureAnchor(anchor, token)
+        if App.config.options.autoRejoin then Pnb.saveResume(); Movement.queueResume() end
         G.setStatus("PNB mulai di " .. anchor.world .. " (" .. anchor.x .. ", " .. anchor.y .. "), " .. #App.config.pnb.tiles .. " tile.")
         while true do
             checkpoint(token)
             worldCheck(anchor.world, token)
+            refreshResume()
             holdAnchor(anchor, token)
             refreshInventory(token)
             if seedId and App.config.pnb.autoDrop and count(seedId) >= App.config.options.seedThreshold then
@@ -3303,14 +3410,52 @@ return function(G)
 
     G.Jobs.register("pnb", {
         label = "Place & Break",
-        prepare = function(r)
+        prepare = function(r, saved)
             assert(r.body and r.controls and r.handlers.setTile and r.handlers.hit and r.handlers.canPlace,
                 "Hook place/break tidak tersedia. Copy diagnostics dari Settings.")
             -- Posisi PNB = tempat karakter berdiri saat toggle dinyalakan (seperti Crusader).
-            App.config.points.pnb = Pnb.standingTile()
+            -- Resume setelah pindah server: pakai spot dari checkpoint.
+            if saved and saved.anchor then App.config.points.pnb = saved.anchor
+            else App.config.points.pnb = Pnb.standingTile() end
         end,
-        run = function(token) Pnb.run(token) end,
+        -- Sama seperti Clarissv: error "recoverable" + setting Rejoin nyala = masuk lagi ke world,
+        -- balik ke spot, lanjut PNB. Pemulihan yang terganggu 3x berturut-turut = berhenti.
+        run = function(token, saved)
+            local anchor = App.config.points.pnb
+            if saved then
+                local r = Bridge.runtime()
+                if r.world.name ~= anchor.world or Bridge.pickerOpen(r) then Pnb.returnToSpot(token) end
+            end
+            while true do
+                local completed, problem = pcall(Pnb.run, token)
+                if completed then break end
+                checkpoint(token)
+                problem = Pnb.classifyFault(problem, token)
+                if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
+                    error(problem, 0)
+                end
+                local interruptions = 0
+                while true do
+                    local recovered, nextProblem = pcall(Pnb.returnToSpot, token)
+                    if recovered then break end
+                    checkpoint(token)
+                    if type(nextProblem) ~= "table" or not nextProblem.recoverable then error(nextProblem, 0) end
+                    interruptions = interruptions + 1
+                    assert(interruptions < 3, "Pemulihan terganggu 3x. Cek world tersimpan dan koneksi.")
+                end
+            end
+            Pnb.clearResume()
+        end,
+        clear = function() Pnb.clearResume() end,
     })
+    -- Auto-resume setelah pindah server (loader dijalankan ulang lewat queue_on_teleport).
+    table.insert(G.resumeHandlers, function()
+        local record = State.loadCheckpoint("pnb")
+        if not record or type(record.data) ~= "table" or type(record.data.anchor) ~= "table" then return false end
+        App.config, App.profile = record.config, Core.profileName(record.profile)
+        G.Jobs.start("pnb", record.data)
+        return true
+    end)
 
     ---------------------------------------------------------------- perekam aksi game
     -- Bungkus sementara semua fungsi milik world dan touch controls, lalu catat setiap panggilan
@@ -3645,6 +3790,7 @@ return function(modules, VERSION)
             previous.controls = nil
         end
         if previous.window then pcall(function() previous.window:Destroy() end) end
+        if previous.idleConnection then pcall(function() previous.idleConnection:Disconnect() end) end
     end
 
     -- 2) App = seluruh state yang hidup selama script jalan.
@@ -3745,6 +3891,11 @@ return function(modules, VERSION)
             "Loader: " .. tostring(env.GrowbloxHanselLoaderDebug or "lokal / tidak diketahui"),
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
+            "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
+                .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
+                .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),
+            "Rejoin & balik ke PNB: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang "
+                .. tostring(App.pnbRejoins or 0) .. "x" .. (App.pnbResumeError and ("; checkpoint error: " .. App.pnbResumeError) or ""),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
@@ -3763,8 +3914,32 @@ return function(modules, VERSION)
         return table.concat(lines, "\n")
     end
 
+    -- Anti-AFK (adaptasi installAntiAFK Clarissv v0.1.43): saat Roblox mendeteksi idle,
+    -- kirim klik kanan virtual lewat VirtualUser. Maksimal sekali per menit.
+    function G.installAntiAFK()
+        if App.idleConnection then return true end
+        local ok, service = pcall(function() return game:GetService("VirtualUser") end)
+        if not ok then App.antiAFKError = tostring(service); return false end
+        local connected, connection = pcall(function()
+            return player.Idled:Connect(function()
+                if not App.alive or not App.config.options.antiAFK then return end
+                if App.lastIdleInput and os.clock() - App.lastIdleInput < 60 then return end
+                local sent, message = pcall(function()
+                    service:CaptureController()
+                    service:ClickButton2(Vector2.new(0, 0))
+                end)
+                if sent then App.lastIdleInput, App.antiAFKError = os.clock(), nil
+                else App.antiAFKError = tostring(message) end
+            end)
+        end)
+        if not connected then App.antiAFKError = tostring(connection); return false end
+        App.idleConnection, App.antiAFKError = connection, nil
+        return true
+    end
+
     function G.unload()
         if not App.alive then return end
+        if App.idleConnection then pcall(function() App.idleConnection:Disconnect() end); App.idleConnection = nil end
         if App.job then pcall(G.Jobs.stop) end
         pcall(G.Movement.releaseControls)
         App.alive = false
@@ -3776,6 +3951,7 @@ return function(modules, VERSION)
     -- 5) Pulihkan setting terakhir (kalau ada), lalu muat UI.
     local restored, problem = pcall(G.State.restoreSession)
     if not restored then G.setStatus("Session lama nggak bisa dibaca: " .. tostring(problem)) end
+    if App.config.options.antiAFK then G.installAntiAFK() end
 
     local function loadWindUI()
         if type(env.GrowbloxHanselWindUI) == "table" then return env.GrowbloxHanselWindUI end

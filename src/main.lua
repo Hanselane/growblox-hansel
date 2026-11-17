@@ -26,6 +26,7 @@ return function(modules, VERSION)
             previous.controls = nil
         end
         if previous.window then pcall(function() previous.window:Destroy() end) end
+        if previous.idleConnection then pcall(function() previous.idleConnection:Disconnect() end) end
     end
 
     -- 2) App = seluruh state yang hidup selama script jalan.
@@ -126,6 +127,11 @@ return function(modules, VERSION)
             "Loader: " .. tostring(env.GrowbloxHanselLoaderDebug or "lokal / tidak diketahui"),
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
+            "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
+                .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
+                .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),
+            "Rejoin & balik ke PNB: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang "
+                .. tostring(App.pnbRejoins or 0) .. "x" .. (App.pnbResumeError and ("; checkpoint error: " .. App.pnbResumeError) or ""),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
@@ -144,8 +150,32 @@ return function(modules, VERSION)
         return table.concat(lines, "\n")
     end
 
+    -- Anti-AFK (adaptasi installAntiAFK Clarissv v0.1.43): saat Roblox mendeteksi idle,
+    -- kirim klik kanan virtual lewat VirtualUser. Maksimal sekali per menit.
+    function G.installAntiAFK()
+        if App.idleConnection then return true end
+        local ok, service = pcall(function() return game:GetService("VirtualUser") end)
+        if not ok then App.antiAFKError = tostring(service); return false end
+        local connected, connection = pcall(function()
+            return player.Idled:Connect(function()
+                if not App.alive or not App.config.options.antiAFK then return end
+                if App.lastIdleInput and os.clock() - App.lastIdleInput < 60 then return end
+                local sent, message = pcall(function()
+                    service:CaptureController()
+                    service:ClickButton2(Vector2.new(0, 0))
+                end)
+                if sent then App.lastIdleInput, App.antiAFKError = os.clock(), nil
+                else App.antiAFKError = tostring(message) end
+            end)
+        end)
+        if not connected then App.antiAFKError = tostring(connection); return false end
+        App.idleConnection, App.antiAFKError = connection, nil
+        return true
+    end
+
     function G.unload()
         if not App.alive then return end
+        if App.idleConnection then pcall(function() App.idleConnection:Disconnect() end); App.idleConnection = nil end
         if App.job then pcall(G.Jobs.stop) end
         pcall(G.Movement.releaseControls)
         App.alive = false
@@ -157,6 +187,7 @@ return function(modules, VERSION)
     -- 5) Pulihkan setting terakhir (kalau ada), lalu muat UI.
     local restored, problem = pcall(G.State.restoreSession)
     if not restored then G.setStatus("Session lama nggak bisa dibaca: " .. tostring(problem)) end
+    if App.config.options.antiAFK then G.installAntiAFK() end
 
     local function loadWindUI()
         if type(env.GrowbloxHanselWindUI) == "table" then return env.GrowbloxHanselWindUI end

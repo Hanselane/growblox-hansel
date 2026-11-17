@@ -336,6 +336,53 @@ T.test("Perekam mencatat panggilan game lalu memulihkan fungsi asli", function()
     T.eq(text:find('world.call("DropItem", 41, 5) x2', 1, true) ~= nil, true, text)
 end)
 
+T.test("Rejoin: terlempar ke world picker saat PNB -> masuk lagi, balik ke spot, lanjut", function()
+    local sim = setup({ blocks = 4 })
+    local entered = 0
+    sim.world.enter = function(name)
+        entered = entered + 1
+        sim.world.name, sim.avatar.x, sim.avatar.vx = name, 3.5, 0 -- muncul di pintu masuk world
+        return true
+    end
+    sim.G.Jobs.start("pnb")
+    sim.S.run(2, 0.025)
+    sim.world.name = "" -- terlempar ke world picker
+    waitJob(sim, 300)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(entered, 1, "masuk ulang sekali")
+    T.eq(sim.App.stats.broken, 4, "PNB lanjut sampai blok habis")
+    T.eq(math.abs(sim.avatar.x - 10.5) < 0.35, true, "balik ke spot: x " .. sim.avatar.x)
+end)
+T.test("Rejoin mati: terlempar ke world picker -> PNB berhenti", function()
+    local sim = setup({ blocks = 4 })
+    sim.App.config.options.autoRejoin = false
+    sim.world.enter = function() error("tidak boleh masuk ulang") end
+    sim.G.Jobs.start("pnb")
+    sim.S.run(2, 0.025)
+    sim.world.name = ""
+    waitJob(sim, 60)
+    sim.S.restore()
+    T.eq(sim.App.job, nil)
+    T.eq((sim.App.lastError or ""):find("world picker", 1, true) ~= nil, true, tostring(sim.App.lastError))
+end)
+T.test("Resume setelah pindah server: checkpoint PNB -> masuk world, ke spot tersimpan, lanjut", function()
+    local sim = setup({ blocks = 2 })
+    local config = Core.validate(sim.App.config)
+    config.points.pnb = { world = "PNBW", x = 10, y = 9 }
+    sim.G.State.loadCheckpoint = function(name)
+        if name == "pnb" then return { config = config, profile = "Default", data = { anchor = config.points.pnb } } end
+    end
+    sim.App.config.points.pnb = nil
+    sim.world.name, sim.avatar.x = "LOBBY", 3.5 -- server baru, world lain
+    sim.world.enter = function(name) sim.world.name, sim.avatar.x, sim.avatar.vx = name, 2.5, 0; return true end
+    T.eq(sim.G.resumeHandlers[#sim.G.resumeHandlers](), true, "handler PNB menemukan checkpoint")
+    waitJob(sim, 300)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.App.stats.broken, 2)
+    T.eq(sim.App.config.points.pnb.x, 10, "spot dari checkpoint, bukan tempat muncul")
+end)
 T.test("gridText: Y di tengah, # untuk tile terpilih", function()
     local sim = setup()
     sim.S.restore()
