@@ -27,23 +27,43 @@ local function setup(options)
         FARM1 = grid(options.farmWidth or 16, options.farmExtra),
     }
     local boxes = { STOCK = { ["5:9"] = { { SEED, options.boxSeeds or 100 } } } }
+    for _, row in ipairs(options.boxOthers or {}) do table.insert(boxes.STOCK["5:9"], row) end
+    if options.sameWorld then -- box seed di world farm itu sendiri (tile 15,9; lantai tetap ada)
+        grids.FARM1[9][15] = BOX
+        boxes.FARM1 = { ["15:9"] = boxes.STOCK["5:9"] }
+    end
     world.name, world.w, world.h, world.fg = "STOCK", 20, 14, grids.STOCK
     avatar.x, avatar.y, avatar.vx, avatar.vy, avatar.grounded = 2.5, 10, 0, 0, true
     local server = { [40] = 50, [18] = 1, [SEED] = options.bagSeeds or 6 }
     inventory.slots = {}
     for id, n in pairs(server) do table.insert(inventory.slots, { id = id, n = n }) end
-    world.call = function(method, x, y, id)
+    world.call = function(method, x, y, id, _, _, amount)
+        if method == "DisplayItem" and id ~= nil then -- taruh ke box
+            assert(amount > 0 and (server[id] or 0) >= amount, "deposit tidak valid")
+            server[id] = server[id] - amount
+            local rows = boxes[world.name][x .. ":" .. y]
+            for _, row in ipairs(rows) do if row[1] == id then row[2] = row[2] + amount; return true, {} end end
+            table.insert(rows, { id, amount })
+            return true, {}
+        end
         if method == "GetInventory" then
             local slots = {}
             for itemId, n in pairs(server) do if n > 0 then table.insert(slots, { itemId, n }) end end
             return { slots = slots, capacity = 16 }
         elseif method == "DisplayItem" and id == nil then
-            local rows = boxes[world.name][x .. ":" .. y]
-            local take = math.min(rows[1][2], 200 - (server[SEED] or 0))
-            rows[1][2] = rows[1][2] - take
-            if rows[1][2] == 0 then table.remove(rows, 1) end
-            server[SEED] = (server[SEED] or 0) + take
-            return true, { taken = { { SEED, take } } }
+            -- "ambil semua": tiap baris diambil sebanyak muat di tas (maks 200 per item)
+            local rows, taken = boxes[world.name][x .. ":" .. y], {}
+            for i = #rows, 1, -1 do
+                local row = rows[i]
+                local take = math.min(row[2], 200 - (server[row[1]] or 0))
+                if take > 0 then
+                    row[2] = row[2] - take
+                    server[row[1]] = (server[row[1]] or 0) + take
+                    table.insert(taken, { row[1], take })
+                end
+                if row[2] == 0 then table.remove(rows, i) end
+            end
+            return true, { taken = taken }
         end
     end
     world.displays = { get = function(x, y) return boxes[world.name] and boxes[world.name][x .. ":" .. y] end }
@@ -142,11 +162,36 @@ T.test("parseWorlds: rapikan nama, buang duplikat", function()
     local list = Core.parseWorlds(" farm1, FARM2;farm1 ")
     T.eq(#list, 2); T.eq(list[1], "FARM1"); T.eq(list[2], "FARM2")
 end)
-T.test("checkSetup menolak storage world yang juga farm", function()
+T.test("checkSetup: storage world boleh sama dengan dirt farm world", function()
     local config = Core.defaults()
     config.planting = { seedId = 41, storageWorld = "A", worlds = { "A" } }
     config.points.plantBox = { world = "A", x = 1, y = 1, standX = 1, standY = 1 }
-    T.errors(function() Core.checkSetup(config, "plant", { [41] = { kind = "seed" } }) end, "different")
+    T.eq(Core.checkSetup(config, "plant", { [41] = { kind = "seed" } }), true)
+end)
+T.test("Box campur: cuma seed yang dipilih yang diambil, item lain ditaruh balik", function()
+    local sim = setup({ bagSeeds = 2, boxSeeds = 100, farmWidth = 12, boxOthers = { { 40, 30 }, { 2, 10 } } })
+    sim.G.Jobs.start("plant")
+    waitJob(sim, 300)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(planted(sim, 9, 0, 11), 12, "semua tile tertanam")
+    local rows, others = sim.boxes.STOCK["5:9"], {}
+    for _, row in ipairs(rows) do others[row[1]] = row[2] end
+    T.eq(others[40], 30, "blok tetap di box")
+    T.eq(others[2], 10, "dirt tetap di box")
+    T.eq(sim.server[40], 50, "blok di tas tidak bertambah")
+end)
+T.test("Storage world = dirt farm world: ambil seed dari box di world farm itu sendiri", function()
+    local sim = setup({ bagSeeds = 2, boxSeeds = 100, farmWidth = 16, sameWorld = true })
+    sim.App.config.planting.storageWorld = "FARM1"
+    sim.App.config.points.plantBox = { world = "FARM1", x = 15, y = 9, standX = 14, standY = 9 }
+    sim.G.Jobs.start("plant")
+    waitJob(sim, 300)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(planted(sim, 9, 0, 14), 15, "15 tile tertanam (tile 15 = box)")
+    local left = sim.boxes.FARM1["15:9"][1]
+    T.eq(left == nil or left[2] < 100, true, "seed diambil dari box world farm")
 end)
 
 T.test("Planting penuh: isi ulang seed dari box, tanam seluruh baris, checkpoint dihapus", function()

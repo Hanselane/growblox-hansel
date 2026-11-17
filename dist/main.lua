@@ -1,5 +1,5 @@
--- Growblox Hansel v0.5.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.5.0"
+-- Growblox Hansel v0.5.1. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.5.1"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -381,7 +381,6 @@ function Core.checkSetup(config, mode, items)
         assert(p.storageWorld ~= "" and config.points.plantBox, "Save the planting seed Display Box and storage world first.")
         assert(config.points.plantBox.world:upper() == p.storageWorld, "The saved seed Display Box must be in the entered storage world.")
         assert(#p.worlds > 0, "Enter at least one dirt farm world.")
-        for _, name in ipairs(p.worlds) do assert(name ~= p.storageWorld, "Seed storage and dirt farm worlds must be different.") end
         return true
     end
     if mode == "pnb" then
@@ -2048,6 +2047,59 @@ return function(G)
         return amount
     end
 
+    -- Jumlah item `id` di box, tanpa peduli item lain di box itu (box campur).
+    function Storage.countOnly(point, id)
+        return Core.itemCount(Storage.boxRows(point), id)
+    end
+
+    -- Ambil HANYA item `id` dari box yang juga berisi item lain (box campur).
+    -- Game cuma punya perintah "ambil semua" (DisplayItem x, y, nil), jadi caranya: ambil semua,
+    -- lalu item lain langsung ditaruh balik ke box yang sama (DisplayItem deposit).
+    -- Box yang isinya cuma `id` memakai Storage.withdraw biasa. Return: jumlah `id` yang diambil.
+    function Storage.withdrawSelected(point, id, token, onReady)
+        local others = false
+        for _, row in pairs(Storage.boxRows(point)) do
+            if type(row) == "table" and row[1] ~= id then others = true end
+        end
+        if not others then return (Storage.withdraw(point, id, token, nil, onReady)) end
+        worldCheck(point.world, token)
+        Movement.moveToPoint(point, token)
+        settleStorage(point, token)
+        if Storage.countOnly(point, id) == 0 then return 0 end
+        refreshInventory(token)
+        assert(Bridge.runtime().inventory:room(id) > 0, "Tas tidak punya ruang untuk item ini.")
+        local before = count(id)
+        if onReady then onReady(before) end
+        local ok, result = storageRequest(point, token, function()
+            return Net.bounded(Bridge.runtime().world.call, App.config.options.actionTimeout, token,
+                "DisplayItem", point.x, point.y, nil)
+        end)
+        assert(ok and type(result) == "table", type(result) == "string" and result or "Storage withdrawal failed.")
+        refreshInventory(token)
+        local taken, back = 0, {}
+        for _, row in pairs(result.taken or {}) do
+            assert(type(row[2]) == "number" and row[2] > 0 and row[2] == math.floor(row[2]), "Invalid storage withdrawal count.")
+            if row[1] == id then taken = taken + row[2] else table.insert(back, { row[1], row[2] }) end
+        end
+        -- Taruh balik item lain. Gagal di sini = berhenti dengan pesan jelas (item ada di tas).
+        for _, row in ipairs(back) do
+            local itemId, amount = row[1], math.min(row[2], count(row[1]))
+            if amount > 0 then
+                local before2 = count(itemId)
+                local put, issue = storageRequest(point, token, function()
+                    return Net.bounded(Bridge.runtime().world.call, App.config.options.actionTimeout, token,
+                        "DisplayItem", point.x, point.y, itemId, nil, nil, amount, point.x + 0.5)
+                end)
+                assert(put, "Item lain (" .. tostring(itemId) .. " x" .. amount .. ") terambil dan gagal ditaruh balik ke box: "
+                    .. tostring(issue) .. ". Item itu ada di tas.")
+                refreshInventory(token)
+                assert(count(itemId) <= before2 - amount, "Server tidak mengonfirmasi item " .. tostring(itemId) .. " kembali ke box. Item itu ada di tas.")
+            end
+        end
+        assert(count(id) == before + taken, "The server did not confirm the withdrawn items in your backpack.")
+        return taken
+    end
+
     ---------------------------------------------------------------- simpan posisi box
     function Storage.pointText(point)
         if not point then return "Belum disimpan" end
@@ -3148,12 +3200,12 @@ return function(G)
                 if state.phase == "stock" then
                     enterFarmWorld(settings.storageWorld, state, token)
                     local box = App.config.points.plantBox
-                    if Storage.count(box, id) == 0 then
+                    if Storage.countOnly(box, id) == 0 then
                         Plant.clearResume()
                         G.setStatus("Planting stopped: the seed storage box is empty. Unfinished farm: " .. settings.worlds[state.worldIndex])
                         return false
                     end
-                    Storage.withdraw(box, id, token, nil, function()
+                    Storage.withdrawSelected(box, id, token, function()
                         state.phase = "pickupPending"
                         Plant.saveResume(state)
                     end)
@@ -3437,18 +3489,17 @@ return function(G)
         controls.worlds = tab:Input({ Title = "Dirt farm worlds (in order)", Value = table.concat(App.config.planting.worlds, ", "),
             Placeholder = "FARM1, FARM2, FARM3", Callback = function(value) changeSetting("worlds", value) end })
         controls.point = tab:Paragraph({ Title = "Planting seed storage", Desc = Storage.pointText(App.config.points.plantBox) })
-        tab:Button({ Title = "Save seed Display Box", Desc = "Stand beside the seed box in the storage world. A dedicated box also selects its seed type.",
+        tab:Button({ Title = "Save seed Display Box", Desc = "Berdiri di samping box seed. Box boleh berisi item lain; yang diambil cuma seed yang dipilih. Box berisi 1 jenis seed langsung memilih seed itu.",
             Callback = UI.action(function()
                 local point = Storage.captureNearby("plantBox", "box")
                 App.config.planting.storageWorld = Core.worldName(Bridge.runtime().world.name)
-                local seed
+                -- Box berisi tepat 1 jenis seed = seed itu otomatis dipilih. Box campur boleh.
+                local seed, seeds = nil, 0
                 for _, row in pairs(Storage.boxRows(point)) do
                     local item = Bridge.runtime().items[row[1]]
-                    assert(item and item.kind == "seed", "Use a Display Box containing seeds only.")
-                    assert(not seed or seed == row[1], "Use a Display Box dedicated to one seed type.")
-                    seed = row[1]
+                    if item and item.kind == "seed" and row[1] ~= seed then seed, seeds = row[1], seeds + 1 end
                 end
-                if seed then App.config.planting.seedId = seed end
+                if seeds == 1 then App.config.planting.seedId = seed end
                 refreshSeeds()
                 G.setStatus("Saved planting seed storage: " .. Storage.pointText(point))
             end) })

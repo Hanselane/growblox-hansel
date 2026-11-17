@@ -352,12 +352,12 @@ return function(G)
                 if state.phase == "stock" then
                     enterFarmWorld(settings.storageWorld, state, token)
                     local box = App.config.points.plantBox
-                    if Storage.count(box, id) == 0 then
+                    if Storage.countOnly(box, id) == 0 then
                         Plant.clearResume()
                         G.setStatus("Planting stopped: the seed storage box is empty. Unfinished farm: " .. settings.worlds[state.worldIndex])
                         return false
                     end
-                    Storage.withdraw(box, id, token, nil, function()
+                    Storage.withdrawSelected(box, id, token, function()
                         state.phase = "pickupPending"
                         Plant.saveResume(state)
                     end)
@@ -641,18 +641,17 @@ return function(G)
         controls.worlds = tab:Input({ Title = "Dirt farm worlds (in order)", Value = table.concat(App.config.planting.worlds, ", "),
             Placeholder = "FARM1, FARM2, FARM3", Callback = function(value) changeSetting("worlds", value) end })
         controls.point = tab:Paragraph({ Title = "Planting seed storage", Desc = Storage.pointText(App.config.points.plantBox) })
-        tab:Button({ Title = "Save seed Display Box", Desc = "Stand beside the seed box in the storage world. A dedicated box also selects its seed type.",
+        tab:Button({ Title = "Save seed Display Box", Desc = "Berdiri di samping box seed. Box boleh berisi item lain; yang diambil cuma seed yang dipilih. Box berisi 1 jenis seed langsung memilih seed itu.",
             Callback = UI.action(function()
                 local point = Storage.captureNearby("plantBox", "box")
                 App.config.planting.storageWorld = Core.worldName(Bridge.runtime().world.name)
-                local seed
+                -- Box berisi tepat 1 jenis seed = seed itu otomatis dipilih. Box campur boleh.
+                local seed, seeds = nil, 0
                 for _, row in pairs(Storage.boxRows(point)) do
                     local item = Bridge.runtime().items[row[1]]
-                    assert(item and item.kind == "seed", "Use a Display Box containing seeds only.")
-                    assert(not seed or seed == row[1], "Use a Display Box dedicated to one seed type.")
-                    seed = row[1]
+                    if item and item.kind == "seed" and row[1] ~= seed then seed, seeds = row[1], seeds + 1 end
                 end
-                if seed then App.config.planting.seedId = seed end
+                if seeds == 1 then App.config.planting.seedId = seed end
                 refreshSeeds()
                 G.setStatus("Saved planting seed storage: " .. Storage.pointText(point))
             end) })

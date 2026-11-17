@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.5.0**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.5.1**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -124,7 +124,8 @@ Planting mengisi tanah kosong di setiap world farm dengan seed, berurutan sesuai
 
 ### Requirements
 
-- Satu **world storage** berisi Display Box yang **hanya berisi seed** yang mau ditanam.
+- Satu **world storage** berisi Display Box dengan seed yang mau ditanam. World storage **boleh sama** dengan dirt farm world (box di world farm itu sendiri).
+- Box **boleh berisi item lain**. Game cuma punya perintah "ambil semua", jadi script mengambil semua isi box lalu langsung menaruh balik item lain ke box yang sama; yang tersisa di tas cuma seed yang dipilih. Kalau menaruh balik gagal, Planting berhenti dengan pesan (item itu ada di tas).
 - Satu atau lebih **world farm** yang bisa dimasuki langsung pakai nama. World storage tidak boleh ada di daftar farm.
 - Baris tanam: tile kosong dengan **tanah padat atau platform tepat di bawahnya**. Baris harus bisa dicapai dengan jalan atau lompat dari pintu masuk world.
 - Izin edit di area farm (world lock / area lock). Tile tanpa izin dilewati.
@@ -283,7 +284,7 @@ Setiap file ditulis dengan aman: ditulis ke `.pending` dulu dan dicek, versi lam
 | `File ... tidak cocok` | Download terpotong, atau GitHub belum selesai memperbarui file | Tunggu 1–5 menit, lalu execute ulang |
 | Executor bilang ada execution yang masih berjalan | Execute dua kali terlalu cepat | Tunggu sampai jendela muncul |
 | `The saved Display Box must be in the entered storage world` | World storage beda dengan world tempat box disimpan | Simpan ulang box dengan **Save seed Display Box** |
-| `This storage box contains a different item` | Box seed berisi item lain | Pakai box yang khusus berisi satu jenis seed |
+| `This storage box contains a different item` | Box (Harvest/stock/seed PNB) berisi item lain | Untuk fitur itu pakai box khusus; box seed Planting boleh campur |
 | `Could not reach the saved position` | Rute ke baris/box terhalang | Buka jalan, tambah pijakan, atau pindahkan box |
 | `A seed storage withdrawal was interrupted` | Task berhenti saat mengambil seed | Cek tas dan box, **Clear saved planting**, mulai lagi |
 

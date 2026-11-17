@@ -375,7 +375,6 @@ function Core.checkSetup(config, mode, items)
         assert(p.storageWorld ~= "" and config.points.plantBox, "Save the planting seed Display Box and storage world first.")
         assert(config.points.plantBox.world:upper() == p.storageWorld, "The saved seed Display Box must be in the entered storage world.")
         assert(#p.worlds > 0, "Enter at least one dirt farm world.")
-        for _, name in ipairs(p.worlds) do assert(name ~= p.storageWorld, "Seed storage and dirt farm worlds must be different.") end
         return true
     end
     if mode == "pnb" then

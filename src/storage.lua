@@ -139,6 +139,59 @@ return function(G)
         return amount
     end
 
+    -- Jumlah item `id` di box, tanpa peduli item lain di box itu (box campur).
+    function Storage.countOnly(point, id)
+        return Core.itemCount(Storage.boxRows(point), id)
+    end
+
+    -- Ambil HANYA item `id` dari box yang juga berisi item lain (box campur).
+    -- Game cuma punya perintah "ambil semua" (DisplayItem x, y, nil), jadi caranya: ambil semua,
+    -- lalu item lain langsung ditaruh balik ke box yang sama (DisplayItem deposit).
+    -- Box yang isinya cuma `id` memakai Storage.withdraw biasa. Return: jumlah `id` yang diambil.
+    function Storage.withdrawSelected(point, id, token, onReady)
+        local others = false
+        for _, row in pairs(Storage.boxRows(point)) do
+            if type(row) == "table" and row[1] ~= id then others = true end
+        end
+        if not others then return (Storage.withdraw(point, id, token, nil, onReady)) end
+        worldCheck(point.world, token)
+        Movement.moveToPoint(point, token)
+        settleStorage(point, token)
+        if Storage.countOnly(point, id) == 0 then return 0 end
+        refreshInventory(token)
+        assert(Bridge.runtime().inventory:room(id) > 0, "Tas tidak punya ruang untuk item ini.")
+        local before = count(id)
+        if onReady then onReady(before) end
+        local ok, result = storageRequest(point, token, function()
+            return Net.bounded(Bridge.runtime().world.call, App.config.options.actionTimeout, token,
+                "DisplayItem", point.x, point.y, nil)
+        end)
+        assert(ok and type(result) == "table", type(result) == "string" and result or "Storage withdrawal failed.")
+        refreshInventory(token)
+        local taken, back = 0, {}
+        for _, row in pairs(result.taken or {}) do
+            assert(type(row[2]) == "number" and row[2] > 0 and row[2] == math.floor(row[2]), "Invalid storage withdrawal count.")
+            if row[1] == id then taken = taken + row[2] else table.insert(back, { row[1], row[2] }) end
+        end
+        -- Taruh balik item lain. Gagal di sini = berhenti dengan pesan jelas (item ada di tas).
+        for _, row in ipairs(back) do
+            local itemId, amount = row[1], math.min(row[2], count(row[1]))
+            if amount > 0 then
+                local before2 = count(itemId)
+                local put, issue = storageRequest(point, token, function()
+                    return Net.bounded(Bridge.runtime().world.call, App.config.options.actionTimeout, token,
+                        "DisplayItem", point.x, point.y, itemId, nil, nil, amount, point.x + 0.5)
+                end)
+                assert(put, "Item lain (" .. tostring(itemId) .. " x" .. amount .. ") terambil dan gagal ditaruh balik ke box: "
+                    .. tostring(issue) .. ". Item itu ada di tas.")
+                refreshInventory(token)
+                assert(count(itemId) <= before2 - amount, "Server tidak mengonfirmasi item " .. tostring(itemId) .. " kembali ke box. Item itu ada di tas.")
+            end
+        end
+        assert(count(id) == before + taken, "The server did not confirm the withdrawn items in your backpack.")
+        return taken
+    end
+
     ---------------------------------------------------------------- simpan posisi box
     function Storage.pointText(point)
         if not point then return "Belum disimpan" end
