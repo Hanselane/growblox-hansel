@@ -16,7 +16,7 @@ const VERSION = pkg.version;
 const { user, repo, branch } = pkg.github;
 const BASE = `https://raw.githubusercontent.com/${user}/${repo}/${branch}/`;
 // Urutan penting: modul yang dipakai modul lain ditulis duluan.
-const MODULES = ["core", "navigation", "net", "state", "bridge", "actions", "movement", "storage", "drops", "jobs", "scan", "ui", "plant", "pnb", "main"];
+const MODULES = ["core", "navigation", "net", "state", "bridge", "actions", "movement", "storage", "drops", "jobs", "scan", "ui", "plant", "pnb", "harvest", "main"];
 
 // Adler-32: checksum ringan. Versi Lua-nya ada di loader, hasilnya harus sama persis.
 export function adler32(text) {

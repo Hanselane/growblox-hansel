@@ -32,7 +32,7 @@ function Core.defaults()
     return {
         version = Core.CONFIG_VERSION, blockId = 0, points = {}, options = options,
         planting = { seedId = 0, storageWorld = "", worlds = {} },
-        harvesting = { method = "fist" },
+        harvesting = { method = "fist", seedId = 0, replant = false },
         -- PNB: tiles = kotak yang di-place & break, relatif ke posisi berdiri (dx kanan, dy bawah).
         pnb = { tiles = { { dx = 0, dy = -1 } }, autoStock = false, autoDrop = false },
     }
@@ -153,10 +153,33 @@ function Core.validate(input)
         assert(harvesting.method == "fist" or harvesting.method == "tractor", "Cara panen tidak valid.")
         out.harvesting.method = harvesting.method
     end
+    if harvesting.seedId ~= nil then
+        assert(integer(harvesting.seedId, 0, 1000000), "Seed panen tidak valid.")
+        out.harvesting.seedId = harvesting.seedId
+    end
+    if harvesting.replant ~= nil then
+        assert(type(harvesting.replant) == "boolean", "Setting replant tidak valid.")
+        out.harvesting.replant = harvesting.replant
+    end
     return out
 end
 
 -- Seed dari sebuah blok. Growblox: seedId tertulis di definisi item, atau blockId + 1.
+-- Kebalikan seedId: blok hasil panen dari sebuah seed (biasanya id seed - 1).
+function Core.blockForSeed(items, seedId)
+    for _, id in ipairs({ seedId - 1 }) do
+        local ok, seed = pcall(Core.seedId, items, id)
+        if ok and seed == seedId then return id end
+    end
+    for id, item in pairs(items) do
+        if type(id) == "number" and item.kind ~= "seed" then
+            local ok, seed = pcall(Core.seedId, items, id)
+            if ok and seed == seedId then return id end
+        end
+    end
+    error("Blok hasil panen untuk seed " .. tostring(seedId) .. " tidak ditemukan.")
+end
+
 function Core.seedId(items, blockId)
     local item = items[blockId]
     assert(item, "Blok yang dipilih tidak ada di data game.")
@@ -298,6 +321,12 @@ end
 
 -- Syarat sebelum task boleh mulai. Mode lain ditambah bareng fiturnya.
 function Core.checkSetup(config, mode, items)
+    if mode == "harvest" then
+        local seedId = config.harvesting.seedId
+        assert(items[seedId] and items[seedId].kind == "seed", "Pilih tanaman yang mau dipanen (Scan world dulu).")
+        assert(config.points.farmBox, "Set Display Box farm dulu (berdiri di sampingnya).")
+        return true
+    end
     if mode == "plant" then
         local p = Core.validatePlanting(config.planting)
         assert(items[p.seedId] and items[p.seedId].kind == "seed", "Choose a seed on the Planting tab.")

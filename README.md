@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.9**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.4.0**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -15,6 +15,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Place & Break](#place--break)
 - [Planting](#planting)
 - [World Scan](#world-scan)
+- [Harvest](#harvest)
 - [Settings](#settings)
 - [Menyambung ke game](#menyambung-ke-game)
 - [Data yang disimpan](#data-yang-disimpan)
@@ -32,7 +33,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Auto Collect | Place & Break | Selesai (v0.3.4), dites offline |
 | Planting | Planting | Selesai (v0.2.0), dites offline |
 | World Scan | Harvest | v0.3.9, dites offline. Langkah pertama Harvest |
-| Harvest | Harvest | Belum |
+| Harvest (Fist) + Replant during harvest | Harvest | v0.4.0, dites offline |
 | Rotation | Rotation | Belum |
 
 ## Requirements
@@ -60,7 +61,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 | --- | --- |
 | **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dan seed lewat Display Box. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
-| **Harvest** | **World Scan** (pohon mateng/tumbuh, floating, blok, isi Display Box). Panen dibuat berikutnya. |
+| **Harvest** | **World Scan** (pohon mateng/tumbuh, floating, blok, isi Display Box) dan **Harvest** pakai Fist dengan Replant during harvest. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
 | **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, Anti-AFK, Rejoin world and return to PNB, jeda dan batas waktu, **Unload script**, dan log aktivitas. |
 
@@ -180,6 +181,31 @@ Mirip Growscan di Growtopia, untuk world yang sedang lo masuki. Buka tab **Harve
 Status pohon dihitung dari waktu tanam + lama tumbuh item, sama seperti Claris Growblox. Sejak update Growblox 17 Nov 2026, hook pohon Claris tidak ketemu, jadi World Scan mencari tabel pohon dengan sidik jari: tabel di sekitar fungsi world yang punya data pohon di tile berisi seed. Baris `Data pohon` menjelaskan cara yang dipakai; `Contoh pohon` dan `Lama tumbuh item` membantu memastikan hasilnya benar. Hasil scan ikut ke **Copy diagnostics**.
 
 Batasan: hanya world yang sedang dimasuki, dan hasilnya snapshot (tekan scan lagi untuk update).
+
+## Harvest
+
+Panen pakai Fist, diadaptasi dari Claris Growblox v0.1.43. Bedanya: Claris menunggu **semua** pohon mateng; di sini yang dipanen **pohon yang sudah mateng saja**, yang masih tumbuh dibiarkan.
+
+### Setup
+
+1. Masuk world farm, tekan **Scan world**.
+2. Pilih **Tanaman yang dipanen** (daftar muncul setelah scan, dengan jumlah mateng/total).
+3. Berdiri di samping Display Box di world farm, tekan **Set farm Display Box here**. Box kosong atau hanya berisi blok/seed tanaman itu.
+4. Opsional: nyalakan **Replant during harvest**.
+5. Nyalakan **Harvest**.
+
+### Cara kerja
+
+1. Masuk world farm kalau belum di sana, lalu scan pohon: mana yang mateng, mana yang tumbuh.
+2. Panen baris per baris, zigzag dari atas (sama seperti Planting). Tiap pohon mateng: jalan ke pohon, pukul (maks 3x) sampai tile kosong.
+3. **Pukul sambil collect**: hasil tiap pohon langsung dipungut dari tempat berdiri; pickup bawaan game juga tetap nyala saat jalan. Sisa drop di baris itu dipungut sebelum pindah baris.
+4. **Replant during harvest** (opsional): tile yang baru dipanen langsung ditanam lagi pakai seed di tas, termasuk seed hasil panen barusan. Tiap tanam dicek ke server; yang ditolak dilewati, panen tetap lanjut.
+5. Tas hampir penuh: blok (dan seed lebih dari 100 kalau replant nyala) disimpan dulu ke box farm, lalu lanjut. Di akhir, semua blok dan seed disimpan ke box farm.
+6. Selesai: status menampilkan jumlah dipanen, ditanam ulang, dan berapa pohon masih tumbuh beserta sisa waktunya.
+
+Dengan **Rejoin world and return to PNB** nyala, Harvest yang terlempar ke world picker masuk lagi ke world farm dan mengulang dari scan (pohon yang sudah dipanen tidak dihitung lagi), maks 3x.
+
+Belum ada: panen pakai Dear John Tractor, dan menunggu otomatis sampai pohon berikutnya mateng.
 
 ## Settings
 

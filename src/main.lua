@@ -103,6 +103,7 @@ return function(modules, VERSION)
     G.UI = modules.ui(G)
     G.Plant = modules.plant(G)
     G.Pnb = modules.pnb(G)
+    G.Harvest = modules.harvest(G)
     App.config = G.Core.defaults()
 
     function G.connect()
@@ -134,6 +135,8 @@ return function(modules, VERSION)
             "Rejoin & balik ke PNB: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang "
                 .. tostring(App.pnbRejoins or 0) .. "x" .. (App.pnbResumeError and ("; checkpoint error: " .. App.pnbResumeError) or ""),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
+            "Harvest: " .. tostring(App.harvestPlan or "-") .. " | seed " .. tostring(App.config.harvesting.seedId)
+                .. ", replant " .. tostring(App.config.harvesting.replant) .. ", box " .. G.Storage.pointText(App.config.points.farmBox),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
                 .. tostring(App.config and App.config.options.collectRange) .. ", " .. tostring(App.autoCollectInfo or "-"),
