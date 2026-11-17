@@ -217,27 +217,8 @@ return function(G)
         end
     end
 
-    -- Error biasa saat aksi bisa jadi efek world picker/avatar mati yang belum kelihatan.
-    -- Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error "recoverable".
     function Pnb.classifyFault(problem, token)
-        if type(problem) == "table" and problem.recoverable then return problem end
-        if tostring(problem):find("Stopped", 1, true) then return problem end
-        Movement.releaseControls()
-        local name, deadline = App.config.points.pnb.world, os.clock() + 1.5
-        repeat
-            checkpoint(token)
-            local r = Bridge.runtime()
-            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
-                return Bridge.recoverable("Kembali ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
-            end
-            if r.world.name ~= name then return problem end
-            local state = r.body and r.body.state()
-            if state and (not state.active or state.dead) then
-                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
-            end
-            if os.clock() >= deadline then return problem end
-            pause(0.1, token)
-        until false
+        return Movement.classifyFault(problem, token, App.config.points.pnb.world)
     end
 
     -- Masuk lagi ke world PNB (lewat world picker, bisa pindah server) lalu jalan ke spot.

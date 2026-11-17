@@ -335,5 +335,29 @@ return function(G)
         if not options.moving then Actions.refreshInventory(token) end
     end
 
+    -- Error biasa saat aksi bisa jadi efek keluar world / avatar mati yang belum kelihatan
+    -- (classifyPNBFault Clarissv). Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error
+    -- "recoverable" supaya task bisa masuk lagi ke world. Dipakai PNB dan Harvest.
+    function Movement.classifyFault(problem, token, name)
+        if type(problem) == "table" and problem.recoverable then return problem end
+        if tostring(problem):find("Stopped", 1, true) then return problem end
+        Movement.releaseControls()
+        local deadline = os.clock() + 1.5
+        repeat
+            checkpoint(token)
+            local r = Bridge.runtime()
+            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
+                return Bridge.recoverable("Keluar ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+            end
+            if r.world.name ~= name then return problem end
+            local state = r.body and r.body.state()
+            if state and (not state.active or state.dead) then
+                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
+            end
+            if os.clock() >= deadline then return problem end
+            pause(0.1, token)
+        until false
+    end
+
     return Movement
 end

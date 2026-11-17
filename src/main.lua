@@ -132,8 +132,9 @@ return function(modules, VERSION)
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
                 .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
                 .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),
-            "Rejoin & balik ke PNB: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang "
-                .. tostring(App.pnbRejoins or 0) .. "x" .. (App.pnbResumeError and ("; checkpoint error: " .. App.pnbResumeError) or ""),
+            "Rejoin & balik ke PNB/Harvest: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang PNB "
+                .. tostring(App.pnbRejoins or 0) .. "x, Harvest " .. tostring(App.harvestRejoins or 0) .. "x"
+                .. ((App.pnbResumeError or App.harvestResumeError) and ("; checkpoint error: " .. tostring(App.pnbResumeError or App.harvestResumeError)) or ""),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | seed " .. tostring(App.config.harvesting.seedId)
                 .. ", replant " .. tostring(App.config.harvesting.replant) .. ", box " .. G.Storage.pointText(App.config.points.farmBox),

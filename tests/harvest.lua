@@ -180,6 +180,51 @@ T.test("Harvest: tanpa tanaman / box farm -> pesan setup jelas", function()
     T.errors(function() sim.G.Jobs.start("harvest") end, "Display Box farm")
     sim.S.restore()
 end)
+T.test("Keluar world saat Harvest -> masuk lagi ke world farm, scan ulang, lanjut sampai selesai", function()
+    local sim = setup()
+    local entered = 0
+    sim.world.enter = function(name)
+        entered = entered + 1
+        sim.world.name, sim.avatar.x, sim.avatar.vx = name, 14.5, 0
+        return true
+    end
+    sim.G.Jobs.start("harvest")
+    sim.S.run(3, 0.025) -- sebagian pohon sudah dipanen
+    sim.world.name = "" -- keluar ke world picker
+    waitJob(sim, 400)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(entered, 1, "masuk lagi sekali")
+    T.eq(sim.App.harvestRejoins, 1)
+    for _, x in ipairs({ 2, 3, 5, 6, 8, 9 }) do T.eq(sim.world.fg[8][x], 0, "pohon mateng x " .. x .. " dipanen") end
+    T.eq(boxCount(sim, BLOCK), 18, "semua hasil tetap masuk box")
+end)
+T.test("Keluar world saat Harvest dengan Rejoin mati -> berhenti", function()
+    local sim = setup()
+    sim.App.config.options.autoRejoin = false
+    sim.world.enter = function() error("tidak boleh masuk") end
+    sim.G.Jobs.start("harvest")
+    sim.S.run(3, 0.025)
+    sim.world.name = ""
+    waitJob(sim, 60)
+    sim.S.restore()
+    T.eq(sim.App.job, nil)
+    T.eq((sim.App.lastError or ""):find("world picker", 1, true) ~= nil, true, tostring(sim.App.lastError))
+end)
+T.test("Resume setelah pindah server: checkpoint Harvest -> masuk world farm dan panen", function()
+    local sim = setup()
+    local config = Core.validate(sim.App.config)
+    sim.G.State.loadCheckpoint = function(name)
+        if name == "harvest" then return { config = config, profile = "Default", data = { world = "FARM" } } end
+    end
+    sim.world.name = "LOBBY"
+    sim.world.enter = function(name) sim.world.name, sim.avatar.x, sim.avatar.vx = name, 14.5, 0; return true end
+    T.eq(sim.G.resumeHandlers[#sim.G.resumeHandlers](), true)
+    waitJob(sim, 400)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(boxCount(sim, BLOCK), 18)
+end)
 T.test("blockForSeed: seed 41 -> blok 40", function()
     local fake = T.fakeGame()
     T.eq(Core.blockForSeed(fake.items, 41), 40)

@@ -76,7 +76,7 @@ return function(G)
         pcall(function() s:Section({ Title = "Settings" }) end)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
-            { "autoRejoin", "Rejoin world and return to PNB", "Terlempar ke world picker, avatar mati, atau pindah server: masuk lagi ke world PNB, jalan balik ke spot, lanjut. Juga lanjut Planting dari checkpoint." },
+            { "autoRejoin", "Rejoin world and return to PNB & Harvest", "Keluar ke world picker, avatar mati, atau pindah server: masuk lagi ke world task (PNB: balik ke spot; Harvest: world farm, scan ulang, lanjut panen). Juga lanjut Planting dari checkpoint." },
         }) do
             local key = info[1]
             UI.settings[key] = s:Toggle({ Title = info[2], Desc = info[3], Value = App.config.options[key],

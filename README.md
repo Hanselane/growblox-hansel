@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.4.0**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.4.1**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -63,7 +63,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | **World Scan** (pohon mateng/tumbuh, floating, blok, isi Display Box) dan **Harvest** pakai Fist dengan Replant during harvest. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
-| **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, Anti-AFK, Rejoin world and return to PNB, jeda dan batas waktu, **Unload script**, dan log aktivitas. |
+| **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, Anti-AFK, Rejoin world and return to PNB & Harvest, jeda dan batas waktu, **Unload script**, dan log aktivitas. |
 
 ## Place & Break
 
@@ -203,7 +203,7 @@ Panen pakai Fist, diadaptasi dari Claris Growblox v0.1.43. Bedanya: Claris menun
 5. Tas hampir penuh: blok (dan seed lebih dari 100 kalau replant nyala) disimpan dulu ke box farm, lalu lanjut. Di akhir, semua blok dan seed disimpan ke box farm.
 6. Selesai: status menampilkan jumlah dipanen, ditanam ulang, dan berapa pohon masih tumbuh beserta sisa waktunya.
 
-Dengan **Rejoin world and return to PNB** nyala, Harvest yang terlempar ke world picker masuk lagi ke world farm dan mengulang dari scan (pohon yang sudah dipanen tidak dihitung lagi), maks 3x.
+Dengan **Rejoin world and return to PNB & Harvest** nyala: keluar ke world picker atau avatar mati saat Harvest = masuk lagi ke world farm, scan ulang, lanjut panen (pohon yang sudah dipanen tidak dihitung lagi). Berhenti kalau gagal 3x berturut-turut tanpa ada pohon yang berhasil dipanen di antaranya. Pindah server: script dimuat ulang (butuh `queue_on_teleport`) dan Harvest lanjut dari checkpoint.
 
 Belum ada: panen pakai Dear John Tractor, dan menunggu otomatis sampai pohon berikutnya mateng.
 
@@ -214,7 +214,7 @@ Diadaptasi dari tab Settings Claris Growblox v0.1.43. Setting cuma bisa diubah s
 | Setting | Bawaan | Fungsi |
 | --- | --- | --- |
 | **Anti-AFK** | On | Saat Roblox mendeteksi idle, script mengirim klik virtual (`VirtualUser`), maksimal sekali per menit, supaya tidak di-kick karena AFK. |
-| **Rejoin world and return to PNB** | On | Kalau terlempar ke world picker, avatar mati, atau pindah server saat PNB: masuk lagi ke world PNB (maks 3 percobaan), jalan balik ke spot, lalu lanjut. Juga dipakai Planting untuk lanjut dari checkpoint. |
+| **Rejoin world and return to PNB & Harvest** | On | Kalau keluar ke world picker, avatar mati, atau pindah server: **PNB** masuk lagi ke world PNB (maks 3 percobaan), jalan balik ke spot, lalu lanjut. **Harvest** masuk lagi ke world farm, scan ulang, lalu lanjut panen. Juga dipakai Planting untuk lanjut dari checkpoint. |
 | **Jeda setelah place** | 0,2 dtk | Jeda setelah menaruh blok/seed. |
 | **Waktu tunggu drop** | 0,1 dtk | Jeda sebelum memungut drop. |
 | **Batas waktu request server** | 10 dtk | Request ke server yang lebih lama dari ini dianggap gagal. |
@@ -222,7 +222,7 @@ Diadaptasi dari tab Settings Claris Growblox v0.1.43. Setting cuma bisa diubah s
 
 Hit delay dan batas seed ada di tab Place & Break.
 
-Pindah server saat PNB: kalau executor punya `queue_on_teleport`, script dimuat ulang otomatis di server baru dan PNB dilanjutkan dari checkpoint (spot PNB tersimpan, berlaku 6 jam). Diagnostics menampilkan baris `Anti-AFK` dan `Rejoin & balik ke PNB` (berapa kali masuk ulang).
+Pindah server saat PNB: kalau executor punya `queue_on_teleport`, script dimuat ulang otomatis di server baru dan PNB dilanjutkan dari checkpoint (spot PNB tersimpan, berlaku 6 jam). Diagnostics menampilkan baris `Anti-AFK` dan `Rejoin & balik ke PNB/Harvest` (berapa kali masuk ulang per task).
 
 ## Menyambung ke game
 

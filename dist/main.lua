@@ -1,5 +1,5 @@
--- Growblox Hansel v0.4.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.4.0"
+-- Growblox Hansel v0.4.1. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.4.1"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -1834,6 +1834,30 @@ return function(G)
         if not options.moving then Actions.refreshInventory(token) end
     end
 
+    -- Error biasa saat aksi bisa jadi efek keluar world / avatar mati yang belum kelihatan
+    -- (classifyPNBFault Clarissv). Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error
+    -- "recoverable" supaya task bisa masuk lagi ke world. Dipakai PNB dan Harvest.
+    function Movement.classifyFault(problem, token, name)
+        if type(problem) == "table" and problem.recoverable then return problem end
+        if tostring(problem):find("Stopped", 1, true) then return problem end
+        Movement.releaseControls()
+        local deadline = os.clock() + 1.5
+        repeat
+            checkpoint(token)
+            local r = Bridge.runtime()
+            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
+                return Bridge.recoverable("Keluar ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+            end
+            if r.world.name ~= name then return problem end
+            local state = r.body and r.body.state()
+            if state and (not state.active or state.dead) then
+                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
+            end
+            if os.clock() >= deadline then return problem end
+            pause(0.1, token)
+        until false
+    end
+
     return Movement
 end
 
@@ -2670,7 +2694,7 @@ return function(G)
         pcall(function() s:Section({ Title = "Settings" }) end)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
-            { "autoRejoin", "Rejoin world and return to PNB", "Terlempar ke world picker, avatar mati, atau pindah server: masuk lagi ke world PNB, jalan balik ke spot, lanjut. Juga lanjut Planting dari checkpoint." },
+            { "autoRejoin", "Rejoin world and return to PNB & Harvest", "Keluar ke world picker, avatar mati, atau pindah server: masuk lagi ke world task (PNB: balik ke spot; Harvest: world farm, scan ulang, lanjut panen). Juga lanjut Planting dari checkpoint." },
         }) do
             local key = info[1]
             UI.settings[key] = s:Toggle({ Title = info[2], Desc = info[3], Value = App.config.options[key],
@@ -3620,27 +3644,8 @@ return function(G)
         end
     end
 
-    -- Error biasa saat aksi bisa jadi efek world picker/avatar mati yang belum kelihatan.
-    -- Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error "recoverable".
     function Pnb.classifyFault(problem, token)
-        if type(problem) == "table" and problem.recoverable then return problem end
-        if tostring(problem):find("Stopped", 1, true) then return problem end
-        Movement.releaseControls()
-        local name, deadline = App.config.points.pnb.world, os.clock() + 1.5
-        repeat
-            checkpoint(token)
-            local r = Bridge.runtime()
-            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
-                return Bridge.recoverable("Kembali ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
-            end
-            if r.world.name ~= name then return problem end
-            local state = r.body and r.body.state()
-            if state and (not state.active or state.dead) then
-                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
-            end
-            if os.clock() >= deadline then return problem end
-            pause(0.1, token)
-        until false
+        return Movement.classifyFault(problem, token, App.config.points.pnb.world)
     end
 
     -- Masuk lagi ke world PNB (lewat world picker, bisa pindah server) lalu jalan ke spot.
@@ -4169,11 +4174,29 @@ return function(G)
         return true
     end
 
+    ---------------------------------------------------------------- keluar world & resume
+    -- Setting "Rejoin world and return to PNB & Harvest": checkpoint harvest disimpan saat mulai
+    -- dan tiap 2 menit, supaya setelah pindah server script dimuat ulang dan Harvest lanjut.
+    local lastSave = -math.huge
+    function Harvest.saveResume()
+        G.State.saveCheckpoint("harvest", { world = App.config.points.farmBox.world })
+        lastSave = os.clock()
+    end
+    function Harvest.clearResume() G.State.clearCheckpoint("harvest") end
+    local function refreshResume()
+        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastSave >= 120 then
+            local ok, issue = pcall(Harvest.saveResume)
+            if not ok then App.harvestResumeError = tostring(issue) end
+        end
+    end
+
     function Harvest.run(token)
         local box, seedId = App.config.points.farmBox, App.config.harvesting.seedId
         local r = Bridge.runtime()
         if r.world.name ~= box.world or Bridge.pickerOpen(r) then
-            Movement.enterWorld(box.world, token, { label = "Harvest", resumeButton = "Harvest" })
+            G.setStatus("Masuk ke world farm " .. box.world .. "...")
+            Movement.enterWorld(box.world, token, { label = "Harvest", resumeButton = "Harvest",
+                save = App.config.options.autoRejoin and Harvest.saveResume or nil })
         end
         r = worldCheck(box.world, token)
         local blockId = Core.blockForSeed(r.items, seedId)
@@ -4195,6 +4218,7 @@ return function(G)
             G.setStatus(string.format("Panen baris %d: %d pohon mateng...", row.y, #entry.points))
             for _, point in ipairs(entry.points) do
                 checkpoint(token)
+                refreshResume()
                 -- Tas hampir penuh: simpan dulu ke box farm, lalu lanjut dari pohon ini.
                 if r.inventory:room(blockId) < 10 or r.inventory:room(seedId) < 10 then
                     store(blockId, seedId, replantOn and math.min(count(seedId), 100) or 0, token)
@@ -4224,23 +4248,39 @@ return function(G)
             assert(r.body and r.controls and r.handlers and type(r.handlers.hit) == "function",
                 "Hook pukul/gerak tidak tersedia. Copy diagnostics dari Settings.")
         end,
-        -- Terlempar ke world picker / avatar mati + setting Rejoin nyala: masuk lagi dan ulangi
-        -- dari scan (aman: pohon yang sudah dipanen tidak terhitung lagi). Maks 3x.
+        -- Keluar world / avatar mati + setting Rejoin nyala: masuk lagi ke world farm, scan ulang,
+        -- lanjut panen (aman: pohon yang sudah dipanen tidak terhitung lagi). Gagal 3x berturut-turut
+        -- tanpa ada pohon yang berhasil dipanen di antaranya = berhenti.
         run = function(token)
-            local interruptions = 0
+            if App.config.options.autoRejoin then Harvest.saveResume(); Movement.queueResume() end
+            local failures, treesAtFailure = 0, nil
             while true do
                 local completed, problem = pcall(Harvest.run, token)
                 if completed then break end
                 checkpoint(token)
+                problem = Movement.classifyFault(problem, token, App.config.points.farmBox.world)
                 if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
                     error(problem, 0)
                 end
-                interruptions = interruptions + 1
-                assert(interruptions <= 3, "Harvest terganggu 3x: " .. tostring(problem))
-                G.setStatus("Harvest terganggu (" .. tostring(problem) .. "); masuk lagi ke world farm...")
+                local trees = App.stats.trees or 0
+                if treesAtFailure ~= trees then failures = 0 end
+                failures, treesAtFailure = failures + 1, trees
+                assert(failures <= 3, "Harvest terganggu 3x tanpa kemajuan: " .. tostring(problem))
+                App.harvestRejoins = (App.harvestRejoins or 0) + 1
+                G.setStatus("Keluar dari world (" .. tostring(problem) .. "). Masuk lagi ke world farm dan lanjut harvest...")
             end
+            Harvest.clearResume()
         end,
+        clear = function() Harvest.clearResume() end,
     })
+    -- Auto-resume setelah pindah server (loader dijalankan ulang lewat queue_on_teleport).
+    table.insert(G.resumeHandlers, function()
+        local record = G.State.loadCheckpoint("harvest")
+        if not record or type(record.data) ~= "table" then return false end
+        App.config, App.profile = record.config, Core.profileName(record.profile)
+        G.Jobs.start("harvest", record.data)
+        return true
+    end)
 
     ---------------------------------------------------------------- tab Harvest
     function Harvest.buildTab(tab)
@@ -4453,8 +4493,9 @@ return function(modules, VERSION)
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
                 .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
                 .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),
-            "Rejoin & balik ke PNB: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang "
-                .. tostring(App.pnbRejoins or 0) .. "x" .. (App.pnbResumeError and ("; checkpoint error: " .. App.pnbResumeError) or ""),
+            "Rejoin & balik ke PNB/Harvest: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang PNB "
+                .. tostring(App.pnbRejoins or 0) .. "x, Harvest " .. tostring(App.harvestRejoins or 0) .. "x"
+                .. ((App.pnbResumeError or App.harvestResumeError) and ("; checkpoint error: " .. tostring(App.pnbResumeError or App.harvestResumeError)) or ""),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | seed " .. tostring(App.config.harvesting.seedId)
                 .. ", replant " .. tostring(App.config.harvesting.replant) .. ", box " .. G.Storage.pointText(App.config.points.farmBox),

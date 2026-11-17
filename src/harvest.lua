@@ -104,11 +104,29 @@ return function(G)
         return true
     end
 
+    ---------------------------------------------------------------- keluar world & resume
+    -- Setting "Rejoin world and return to PNB & Harvest": checkpoint harvest disimpan saat mulai
+    -- dan tiap 2 menit, supaya setelah pindah server script dimuat ulang dan Harvest lanjut.
+    local lastSave = -math.huge
+    function Harvest.saveResume()
+        G.State.saveCheckpoint("harvest", { world = App.config.points.farmBox.world })
+        lastSave = os.clock()
+    end
+    function Harvest.clearResume() G.State.clearCheckpoint("harvest") end
+    local function refreshResume()
+        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastSave >= 120 then
+            local ok, issue = pcall(Harvest.saveResume)
+            if not ok then App.harvestResumeError = tostring(issue) end
+        end
+    end
+
     function Harvest.run(token)
         local box, seedId = App.config.points.farmBox, App.config.harvesting.seedId
         local r = Bridge.runtime()
         if r.world.name ~= box.world or Bridge.pickerOpen(r) then
-            Movement.enterWorld(box.world, token, { label = "Harvest", resumeButton = "Harvest" })
+            G.setStatus("Masuk ke world farm " .. box.world .. "...")
+            Movement.enterWorld(box.world, token, { label = "Harvest", resumeButton = "Harvest",
+                save = App.config.options.autoRejoin and Harvest.saveResume or nil })
         end
         r = worldCheck(box.world, token)
         local blockId = Core.blockForSeed(r.items, seedId)
@@ -130,6 +148,7 @@ return function(G)
             G.setStatus(string.format("Panen baris %d: %d pohon mateng...", row.y, #entry.points))
             for _, point in ipairs(entry.points) do
                 checkpoint(token)
+                refreshResume()
                 -- Tas hampir penuh: simpan dulu ke box farm, lalu lanjut dari pohon ini.
                 if r.inventory:room(blockId) < 10 or r.inventory:room(seedId) < 10 then
                     store(blockId, seedId, replantOn and math.min(count(seedId), 100) or 0, token)
@@ -159,23 +178,39 @@ return function(G)
             assert(r.body and r.controls and r.handlers and type(r.handlers.hit) == "function",
                 "Hook pukul/gerak tidak tersedia. Copy diagnostics dari Settings.")
         end,
-        -- Terlempar ke world picker / avatar mati + setting Rejoin nyala: masuk lagi dan ulangi
-        -- dari scan (aman: pohon yang sudah dipanen tidak terhitung lagi). Maks 3x.
+        -- Keluar world / avatar mati + setting Rejoin nyala: masuk lagi ke world farm, scan ulang,
+        -- lanjut panen (aman: pohon yang sudah dipanen tidak terhitung lagi). Gagal 3x berturut-turut
+        -- tanpa ada pohon yang berhasil dipanen di antaranya = berhenti.
         run = function(token)
-            local interruptions = 0
+            if App.config.options.autoRejoin then Harvest.saveResume(); Movement.queueResume() end
+            local failures, treesAtFailure = 0, nil
             while true do
                 local completed, problem = pcall(Harvest.run, token)
                 if completed then break end
                 checkpoint(token)
+                problem = Movement.classifyFault(problem, token, App.config.points.farmBox.world)
                 if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
                     error(problem, 0)
                 end
-                interruptions = interruptions + 1
-                assert(interruptions <= 3, "Harvest terganggu 3x: " .. tostring(problem))
-                G.setStatus("Harvest terganggu (" .. tostring(problem) .. "); masuk lagi ke world farm...")
+                local trees = App.stats.trees or 0
+                if treesAtFailure ~= trees then failures = 0 end
+                failures, treesAtFailure = failures + 1, trees
+                assert(failures <= 3, "Harvest terganggu 3x tanpa kemajuan: " .. tostring(problem))
+                App.harvestRejoins = (App.harvestRejoins or 0) + 1
+                G.setStatus("Keluar dari world (" .. tostring(problem) .. "). Masuk lagi ke world farm dan lanjut harvest...")
             end
+            Harvest.clearResume()
         end,
+        clear = function() Harvest.clearResume() end,
     })
+    -- Auto-resume setelah pindah server (loader dijalankan ulang lewat queue_on_teleport).
+    table.insert(G.resumeHandlers, function()
+        local record = G.State.loadCheckpoint("harvest")
+        if not record or type(record.data) ~= "table" then return false end
+        App.config, App.profile = record.config, Core.profileName(record.profile)
+        G.Jobs.start("harvest", record.data)
+        return true
+    end)
 
     ---------------------------------------------------------------- tab Harvest
     function Harvest.buildTab(tab)
