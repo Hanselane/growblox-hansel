@@ -181,6 +181,28 @@ T.test("Perekam menampilkan panggilan jarang walau ada noise per frame", functio
     T.eq(text:find("signText(", 1, true) == nil, true, "noise tidak ditampilkan: " .. text)
     T.eq(text:find("world.signText 200", 1, true) ~= nil, true, "noise diringkas: " .. text)
 end)
+T.test("Perekam menyadap kiriman ke server (FireServer) walau game pakai fungsi lokal", function()
+    local sim = setup()
+    local namecall, method = nil, nil
+    local original = function(self, ...) return "sent" end
+    local saved = {}
+    for k, v in pairs(sim.G.exec) do saved[k] = v end
+    sim.G.exec.game = {}
+    sim.G.exec.getnamecallmethod = function() return method end
+    sim.G.exec.hookmetamethod = function(_, name, fn) namecall = fn; return original end
+    sim.G.Pnb.record(1)
+    local remote = setmetatable({}, { __tostring = function() return "Net" end })
+    method = "FireServer"
+    for i = 1, 100 do namecall(remote, "Move", i) end -- noise per frame
+    T.eq(namecall(remote, "Drop", 41, 5), "sent", "kiriman diteruskan ke fungsi asli")
+    sim.S.run(1.5)
+    sim.S.restore()
+    for k in pairs(sim.G.exec) do sim.G.exec[k] = saved[k] end
+    local text = table.concat(sim.App.recordReport, "\n")
+    T.eq(text:find('remote Net:FireServer Drop("Drop", 41, 5) x1', 1, true) ~= nil, true, text)
+    T.eq(text:find("Sadap server: aktif", 1, true) ~= nil, true, text)
+    T.eq(text:find('"Move"', 1, true) == nil, true, "noise disembunyikan: " .. text)
+end)
 T.test("Karakter terdorong dari spot: jalan balik dan PNB lanjut", function()
     local sim = setup({ blocks = 4 })
     sim.G.Jobs.start("pnb")

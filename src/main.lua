@@ -45,6 +45,9 @@ return function(modules, VERSION)
         getupvalue = getupvalue or (debug and debug.getupvalue),
         debugInfo = debug and debug.info, getinfo = getinfo or (debug and debug.getinfo),
         getrawmetatable = getrawmetatable, setclipboard = setclipboard or toclipboard,
+        -- Untuk perekam aksi: menyadap panggilan ke server (RemoteEvent/RemoteFunction).
+        hookmetamethod = hookmetamethod, getnamecallmethod = getnamecallmethod,
+        newcclosure = newcclosure, checkcaller = checkcaller, game = game,
         sharedTables = { { label = "executor shared", value = shared }, { label = "executor globals", value = env.shared } },
     }
     if type(getrenv) == "function" then

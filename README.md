@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.2**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.3**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -102,7 +102,7 @@ Cara game men-drop item ke lantai belum diketahui, jadi **Auto drop seed belum b
 
 1. Tekan **Rekam aksi drop (30 detik)**.
 2. Dalam 30 detik itu, drop seed **secara manual** sekali.
-3. Tunggu sampai status berubah jadi `Rekaman selesai` (30 detik), baru buka **Settings → Copy diagnostics**. Bagian `Rekaman aksi game` berisi panggilan yang jarang terjadi (aksi manual lo); fungsi yang dipanggil tiap frame cuma diringkas di baris `Sering (diabaikan)`.
+3. Tunggu sampai status berubah jadi `Rekaman selesai` (30 detik), baru buka **Settings → Copy diagnostics**. Bagian `Rekaman aksi game` berisi panggilan yang jarang terjadi (aksi manual lo); fungsi yang dipanggil tiap frame cuma diringkas di baris `Sering (diabaikan)`. Perekam juga menyadap semua kiriman ke server (`remote ...:FireServer`); baris `Sadap server` menunjukkan apakah executor mendukungnya.
 
 Kirim hasil itu untuk dibuatkan Auto drop seed. Perekam hanya mencatat; ia tidak mengirim apa pun ke server, dan fungsi asli dipulihkan setelah 30 detik.
 

@@ -1,5 +1,5 @@
--- Growblox Hansel v0.3.2. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.3.2"
+-- Growblox Hansel v0.3.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.3"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -3259,7 +3259,43 @@ return function(G)
         wrap(r.controls, "controls")
         wrap(r.handlers, "handlers")
         wrap(r.gemHud, "hud")
+        wrap(r.inventory, "inventory")
         for _, item in ipairs(wrapped) do rawset(item.owner, item.key, item.wrapper) end
+        -- Lapis 2: sadap SEMUA kiriman ke server (FireServer/InvokeServer). Game menyimpan
+        -- fungsi lokal sendiri, jadi aksi seperti drop bisa lolos dari bungkus tabel di atas;
+        -- tapi apa pun yang dikirim ke server pasti lewat sini.
+        local X, remoteActive, remoteNote = G.exec, true, "tidak tersedia di executor ini"
+        if type(X.hookmetamethod) == "function" and type(X.getnamecallmethod) == "function" and X.game then
+            local old
+            local function note(remote, method, ...)
+                local first = ...
+                local name = "remote " .. tostring(remote) .. ":" .. method
+                    .. (type(first) == "string" and (" " .. first) or "")
+                byName[name] = (byName[name] or 0) + 1
+                local args = table.pack(...)
+                local parts = {}
+                for i = 1, math.min(args.n, 8) do parts[i] = describe(args[i]) end
+                local signature = name .. "(" .. table.concat(parts, ", ") .. ")"
+                if not counts[signature] then
+                    if #order >= 3000 then return end
+                    table.insert(order, { signature = signature, name = name, at = os.clock() - started, remote = true })
+                    counts[signature] = 0
+                end
+                counts[signature] = counts[signature] + 1
+            end
+            local hook = function(self, ...)
+                if remoteActive then
+                    local method = X.getnamecallmethod()
+                    if (method == "FireServer" or method == "InvokeServer")
+                        and not (X.checkcaller and X.checkcaller()) then
+                        pcall(note, self, method, ...)
+                    end
+                end
+                return old(self, ...)
+            end
+            local ok, result = pcall(X.hookmetamethod, X.game, "__namecall", X.newcclosure and X.newcclosure(hook) or hook)
+            if ok and type(result) == "function" then old, remoteNote = result, "aktif" else remoteNote = "gagal: " .. tostring(result) end
+        end
         App.recording = true
         App.recordReport = { "Rekaman berjalan... tunggu status 'Rekaman selesai'." }
         G.setStatus("Merekam " .. seconds .. " detik. Drop seed secara MANUAL sekarang. Copy diagnostics SETELAH status 'Rekaman selesai'.")
@@ -3268,9 +3304,10 @@ return function(G)
                 if rawget(item.owner, item.key) == item.wrapper then rawset(item.owner, item.key, item.original) end
             end
             App.recording = false
+            remoteActive = false -- hook tetap terpasang tapi cuma meneruskan (aman)
             -- Yang ditampilkan: semua world.call, lalu panggilan JARANG (<= 3x) = aksi manual.
             -- Fungsi yang dipanggil ribuan kali (per frame) cuma diringkas jumlahnya.
-            local report = {}
+            local report = { "Sadap server: " .. remoteNote }
             for _, entry in ipairs(order) do
                 if entry.name == "world.call" or (counts[entry.signature] <= 3 and byName[entry.name] <= 30) then
                     if #report < 40 then
@@ -3278,7 +3315,7 @@ return function(G)
                     end
                 end
             end
-            if #report == 0 then table.insert(report, "Tidak ada panggilan jarang. Drop seed belum tercatat; coba lagi.") end
+            if #report == 1 then table.insert(report, "Tidak ada panggilan jarang. Drop seed belum tercatat; coba lagi.") end
             local busy = {}
             for name, n in pairs(byName) do if n > 30 then table.insert(busy, { name = name, n = n }) end end
             table.sort(busy, function(a, b) return a.n > b.n end)
@@ -3512,6 +3549,9 @@ return function(modules, VERSION)
         getupvalue = getupvalue or (debug and debug.getupvalue),
         debugInfo = debug and debug.info, getinfo = getinfo or (debug and debug.getinfo),
         getrawmetatable = getrawmetatable, setclipboard = setclipboard or toclipboard,
+        -- Untuk perekam aksi: menyadap panggilan ke server (RemoteEvent/RemoteFunction).
+        hookmetamethod = hookmetamethod, getnamecallmethod = getnamecallmethod,
+        newcclosure = newcclosure, checkcaller = checkcaller, game = game,
         sharedTables = { { label = "executor shared", value = shared }, { label = "executor globals", value = env.shared } },
     }
     if type(getrenv) == "function" then
