@@ -189,17 +189,19 @@ T.test("Rotation 1 world: harvest 6 blok -> PNB samping -> replant, ulang sampai
     sim.S.run(2, 0.025)
     sim.S.restore()
     T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
-    for x = 2, 10 do T.eq(sim.world.fg[8][x], SEED, "tile x " .. x .. " ditanam ulang (x 10 = tile PNB terakhir)") end
+    for x = 0, 17 do
+        if x ~= 16 then T.eq(sim.world.fg[8][x], SEED, "tile x " .. x .. " tertanam (bekas panen + sisa farm)") end
+    end
     local report = tostring(sim.App.rotationWorlds and sim.App.rotationWorlds.FARM)
-    T.eq(report:find("total dipanen 8, PNB 24 blok, ditanam ulang 9", 1, true) ~= nil, true, report)
+    T.eq(report:find("total dipanen 8, PNB 24 blok, ditanam ulang 9", 1, true) or report:find("total dipanen 8, PNB 24 blok, ditanam ulang 17", 1, true) ~= nil, true, report)
     T.eq(boxCount(sim, "FARM", SEED) > 0, true, "seed sisa masuk box")
     T.eq(sim.server[BLOCK] or 0, 0, "blok habis di-PNB")
+    T.eq(boxCount(sim, "FARM", BLOCK), 0, "blok TIDAK pernah disimpan ke box")
 end)
 T.test("Rotation 2 world: pindah ke world berikutnya, lalu menunggu kalau semua belum mateng", function()
     local sim = setup({ worlds = { "FARM", "FARM2" } })
     sim.G.Jobs.start("rotation")
-    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 1200)
-    sim.S.run(3, 0.025)
+    runUntil(sim, function() return sim.App.status:find("belum ada pohon mateng", 1, true) ~= nil end, 1500)
     local status = sim.App.status
     sim.G.Jobs.stop()
     sim.S.run(2, 0.025)
@@ -209,6 +211,56 @@ T.test("Rotation 2 world: pindah ke world berikutnya, lalu menunggu kalau semua 
     for _, x in ipairs({ 3, 4, 5 }) do T.eq(sim.grids.FARM2.fg[8][x], SEED, "FARM2 x " .. x .. " ditanam ulang") end
     T.eq(tostring(sim.App.rotationWorlds.FARM2):find("total dipanen 3", 1, true) ~= nil, true, tostring(sim.App.rotationWorlds.FARM2))
     T.eq(status:find("belum ada pohon mateng", 1, true) ~= nil, true, status)
+end)
+T.test("Replant: lubang di baris atas dulu, lalu bekas panen, lalu sisa farm", function()
+    local items = T.fakeGame().items
+    local fg = {}
+    for y = 0, 9 do fg[y] = {}; for x = 0, 9 do fg[y][x] = 0 end end
+    for x = 0, 9 do fg[5][x] = DIRT; fg[9][x] = DIRT end -- dua lantai: baris tanam y 4 dan y 8
+    for x = 0, 9 do fg[4][x] = SEED; fg[8][x] = SEED end
+    fg[4][2], fg[4][7] = 0, 0 -- lubang di baris atas
+    fg[8][3], fg[8][4] = 0, 0 -- bekas panen
+    fg[8][9] = 0 -- tile kosong lain di baris sekarang
+    local sim = setup()
+    local r = { world = { w = 10, h = 10, fg = fg }, items = items }
+    local order = sim.G.Rotation.replantOrder(r, { { x = 3, y = 8 }, { x = 4, y = 8 } }, 8)
+    sim.S.restore()
+    local keys = {}
+    for _, p in ipairs(order) do table.insert(keys, p.x .. ":" .. p.y) end
+    T.eq(table.concat(keys, " "), "2:4 7:4 3:8 4:8 9:8")
+end)
+T.test("Error di tengah rotasi (pukul gagal sekali) -> ulangi world, tidak berhenti", function()
+    local sim = setup()
+    local hit, failed = sim.App.runtime.handlers.hit, false
+    sim.App.runtime.handlers.hit = function(x, y)
+        if not failed and x == 4 then failed = true; error("koneksi putus sesaat") end
+        return hit(x, y)
+    end
+    sim.G.Jobs.start("rotation")
+    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 900)
+    local job = sim.App.job
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(job, "rotation", "rotasi masih jalan setelah error")
+    T.eq(sim.App.rotationRetries, 1)
+    T.eq(tostring(sim.App.rotationLastError):find("koneksi putus sesaat", 1, true) ~= nil, true, tostring(sim.App.rotationLastError))
+    for x = 2, 9 do T.eq(sim.world.fg[8][x], SEED, "x " .. x .. " tetap selesai ditanam") end
+end)
+T.test("Resume rotation: lanjut dari world tersimpan", function()
+    local sim = setup({ worlds = { "FARM", "FARM2" } })
+    local config = Core.validate(sim.App.config)
+    sim.G.State.loadCheckpoint = function(name)
+        if name == "rotation" then return { config = config, profile = "Default", data = { worldIndex = 2 } } end
+    end
+    sim.G.Rotation.resume()
+    sim.S.run(5, 0.025)
+    local world = sim.world.name
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(world, "FARM2", "langsung ke world ke-2")
+    T.eq(sim.grids.FARM.fg[8][2], SEED, "FARM belum disentuh (pohon mateng masih ada)")
 end)
 T.test("Rotation: world tanpa Display Box -> pesan setup jelas", function()
     local sim = setup({ worlds = { "FARM", "FARM2" } })

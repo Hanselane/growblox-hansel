@@ -3,7 +3,11 @@
 --   2) HARVEST pohon mateng (zigzag dari atas) sampai blok di tas mencapai target (bawaan 180);
 --   3) PNB di tempat berhenti: 1 tile kosong di samping (kanan dulu, lalu kiri), sampai blok habis;
 --   4) REPLANT tile yang tadi dipanen (+ tile PNB), lalu kembali ke 2 sampai tidak ada pohon mateng;
---   5) simpan seed sisa (dan blok kalau tas penuh) ke Display Box world itu, lalu world berikutnya.
+--   5) simpan seed sisa (HANYA seed, blok tidak pernah disimpan) ke Display Box world itu, lalu world berikutnya.
+-- Replant (v0.5.2): 1) lubang di baris di ATAS posisi sekarang, 2) tile yang barusan dipanen + tile PNB,
+--   3) tile kosong lain di farm yang bisa ditanam. Supaya farm tidak bolong-bolong.
+-- Resume (v0.5.2): checkpoint selalu disimpan (world ke berapa); error di tengah jalan diulang dari
+--   world itu (maks 5x tanpa kemajuan), dan tombol "Resume rotation" melanjutkan setelah berhenti.
 -- Setelah world terakhir balik ke world pertama. Kalau satu putaran tidak ada yang dipanen, tunggu
 -- sampai pohon tercepat mateng (maks 10 menit per tunggu), lalu putar lagi.
 -- Memakai helper Harvest (harvestTree, replant, store) dan PNB (placeTile, breakTile).
@@ -23,7 +27,7 @@ return function(G)
     end
     function Rotation.clearResume() State.clearCheckpoint("rotation") end
     local function refreshResume()
-        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastSave >= 120 then
+        if App.pending == 0 and os.clock() - lastSave >= 120 then
             local ok, issue = pcall(Rotation.saveResume)
             if not ok then App.rotationResumeError = tostring(issue) end
         end
@@ -38,33 +42,55 @@ return function(G)
         return { world = Bridge.runtime().world.name, x = math.floor(state.x), y = math.floor(state.y - 0.01) }
     end
 
-    -- Seed hampir penuh di tas: simpan kelebihannya ke box world ini, lalu balik ke `back`.
+    -- Simpan HANYA seed ke box world ini (blok tetap di tas untuk PNB). keep = seed yang disisakan.
+    function Rotation.storeSeeds(blockId, seedId, keep, token, box)
+        refreshInventory(token)
+        local amount = count(seedId) - (keep or 0)
+        if amount > 0 then
+            info("Menyimpan " .. amount .. " seed ke Display Box " .. box.world .. "...")
+            G.Storage.deposit(box, seedId, amount, token, nil, blockId)
+        end
+    end
+    -- Seed hampir penuh di tas: simpan kelebihannya ke box, lalu balik ke `back`.
     local function roomCheck(r, box, blockId, seedId, back, token)
-        if r.inventory:room(seedId) < 10 or r.inventory:room(blockId) < 5 then
-            Harvest.store(blockId, seedId, math.min(count(seedId), SEED_KEEP), token, box)
+        if r.inventory:room(seedId) < 10 then
+            Rotation.storeSeeds(blockId, seedId, math.min(count(seedId), SEED_KEEP), token, box)
             if back then Movement.moveTo(back.x, back.y, back.world, token) end
         end
     end
 
-    -- PNB di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri).
-    -- Return: tile yang dipakai (ikut di-replant nanti), atau nil kalau tidak ada tile kosong.
-    function Rotation.pnbHere(r, box, blockId, seedId, token)
-        local here = standing()
-        local side
+    -- PNB di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri). Kalau di situ
+    -- tidak ada, coba berdiri di tile bekas panen lain (`spots`) yang punya samping kosong.
+    -- Return: tile PNB (ikut di-replant), atau nil kalau tidak ketemu (blok tetap di tas).
+    local function sideOf(r, blockId, here)
         for _, dx in ipairs({ 1, -1 }) do
             local x = here.x + dx
             if x >= 0 and x < r.world.w and tileAt(x, here.y) == 0 and r.handlers.canPlace(r.items[blockId], x, here.y) then
-                side = { x = x, y = here.y }
-                break
+                return { x = x, y = here.y }
+            end
+        end
+    end
+    function Rotation.pnbHere(r, box, blockId, seedId, token, spots)
+        local here = standing()
+        local side = sideOf(r, blockId, here)
+        for index = #(spots or {}), 1, -1 do
+            if side then break end
+            local spot = spots[index]
+            if tileAt(spot.x, spot.y) == 0 then
+                local candidate = sideOf(r, blockId, spot)
+                if candidate then
+                    Movement.moveTo(spot.x, spot.y, r.world.name, token)
+                    here, side = standing(), sideOf(r, blockId, standing())
+                end
             end
         end
         if not side then
-            info("Tidak ada tile kosong di samping untuk PNB; blok disimpan ke Display Box.")
-            Harvest.store(blockId, seedId, count(seedId), token, box)
+            info("Tidak ada tile kosong di samping untuk PNB; blok tetap di tas, lanjut.")
             return nil
         end
         local ids = { blockId, seedId, Drops.GEM }
         info(string.format("PNB di %d,%d (tile %s): %d blok...", here.x, here.y, side.x > here.x and "kanan" or "kiri", count(blockId)))
+        local stuck, last = 0, count(blockId)
         while count(blockId) > 0 do
             checkpoint(token)
             refreshResume()
@@ -74,8 +100,32 @@ return function(G)
             Drops.collectNear(here, ids, token, Drops.REACH)
             assert(tileAt(side.x, side.y) == 0 or tileAt(side.x, side.y) == blockId,
                 "Tile PNB rotasi terisi item lain di " .. side.x .. ", " .. side.y .. ".")
+            -- jaga-jaga: 8 putaran tanpa blok berkurang = jangan muter selamanya
+            if count(blockId) < last then stuck, last = 0, count(blockId) else stuck = stuck + 1 end
+            if stuck >= 8 then
+                App.rotationLastError = "PNB tidak maju di " .. side.x .. ", " .. side.y .. " (place/break ditolak); lanjut replant."
+                break
+            end
         end
         return side
+    end
+
+    -- Urutan replant: 1) lubang di baris DI ATAS posisi sekarang, 2) tile bekas panen + tile PNB,
+    -- 3) tile kosong lain di farm yang bisa ditanam (zigzag). Tanpa duplikat.
+    function Rotation.replantOrder(r, pending, currentY)
+        local all = Core.plantingTiles(r.world, r.items, Core.farmRows(r.world, r.items))
+        local list, seen = {}, {}
+        local function add(point)
+            local key = point.x .. ":" .. point.y
+            if not seen[key] and Core.plantingTile(r.world, r.items, point.x, point.y) then
+                seen[key] = true
+                table.insert(list, { x = point.x, y = point.y })
+            end
+        end
+        for _, point in ipairs(all) do if currentY and point.y < currentY then add(point) end end
+        for _, point in ipairs(pending) do add(point) end
+        for _, point in ipairs(all) do add(point) end
+        return list
     end
 
     -- Tanam ulang tile kosong di daftar (urut). Seed habis = berhenti; sisanya dicoba putaran berikutnya.
@@ -103,12 +153,12 @@ return function(G)
         local name, seedId, target = cfg.worlds[index], cfg.seedId, cfg.blockTarget
         local box = cfg.boxes[name]
         App.rotationIndex = index
-        if App.config.options.autoRejoin then Rotation.saveResume() end
+        Rotation.saveResume()
         local r = Bridge.runtime()
         if r.world.name ~= name or Bridge.pickerOpen(r) then
             info(string.format("Rotasi world %d/%d: masuk %s...", index, #cfg.worlds, name))
             Movement.enterWorld(name, token, { label = "Rotation", resumeButton = "Rotation",
-                save = App.config.options.autoRejoin and Rotation.saveResume or nil })
+                save = Rotation.saveResume })
         end
         r = worldCheck(name, token)
         local blockId = Core.blockForSeed(r.items, seedId)
@@ -156,32 +206,36 @@ return function(G)
             if count(blockId) > 0 then
                 local before = count(blockId)
                 progress("PNB")
-                local side = Rotation.pnbHere(r, box, blockId, seedId, token)
+                local side = Rotation.pnbHere(r, box, blockId, seedId, token, harvested)
                 if side then
                     table.insert(pending, side)
                     stats.pnb = stats.pnb + before
                 end
             end
             -- 3) REPLANT tile yang dipanen (+ tile PNB), sampai ketemu pohon mateng berikutnya
-            if #pending > 0 then
-                progress("replant " .. #pending .. " tile")
-                local planted, left = Rotation.replantTiles(r, pending, seedId, token)
+            local currentY = harvested[#harvested] and harvested[#harvested].y or standing().y
+            local order = Rotation.replantOrder(r, pending, currentY)
+            if #order > 0 and count(seedId) > 0 then
+                progress("replant " .. #order .. " tile (atas -> bekas panen -> sisa farm)")
+                local planted = Rotation.replantTiles(r, order, seedId, token)
                 stats.replanted = stats.replanted + planted
-                pending = left
             end
+            -- Tile yang belum kebagian seed tidak dibawa sebagai prioritas: putaran berikutnya
+            -- bekas panen terbaru didahulukan, sisanya tertangkap lagi di langkah "sisa farm".
+            pending = {}
             -- tidak ada pohon mateng lagi di world ini (atau tidak ada yang bisa dipanen sama sekali)
             if plan.ripe == 0 or (#harvested == 0 and count(blockId) == 0) then break end
         end
         -- 4) simpan seed sisa (dan blok kalau masih ada) ke Display Box world ini
-        progress("simpan sisa ke Display Box")
-        Harvest.store(blockId, seedId, 0, token, box)
+        progress("simpan seed sisa ke Display Box")
+        Rotation.storeSeeds(blockId, seedId, 0, token, box)
         plan = Harvest.plan(r, seedId)
         App.rotationWorlds, App.rotationTotals = App.rotationWorlds or {}, App.rotationTotals or {}
         local sum = App.rotationTotals[name] or { harvested = 0, pnb = 0, replanted = 0 }
         for key in pairs(sum) do sum[key] = sum[key] + stats[key] end
         App.rotationTotals[name] = sum
         App.rotationWorlds[name] = string.format("total dipanen %d, PNB %d blok, ditanam ulang %d | %d tile belum ditanam, %d tumbuh%s",
-            sum.harvested, sum.pnb, sum.replanted, #pending, plan.growing,
+            sum.harvested, sum.pnb, sum.replanted, #Core.plantingTiles(r.world, r.items), plan.growing,
             plan.soonest and (", tercepat mateng " .. Harvest.duration(plan.soonest)) or "")
         return total, plan.soonest
     end
@@ -220,8 +274,10 @@ return function(G)
                 and type(r.handlers.setTile) == "function" and type(r.handlers.plantSeed) == "function",
                 "Hook pukul/place/tanam tidak tersedia. Copy diagnostics dari Settings.")
         end,
-        -- Keluar world / avatar mati + Rejoin nyala: masuk lagi ke world rotasi yang sedang dikerjakan
-        -- dan lanjut dari scan. Gagal 3x berturut-turut tanpa kemajuan = berhenti.
+        -- Error di tengah jalan TIDAK langsung menghentikan rotasi:
+        --   keluar world / avatar mati (+ setting Rejoin) -> masuk lagi ke world itu, lanjut dari scan;
+        --   error lain (pukul gagal, jalan timeout, request box gagal, dll.) -> tunggu 3 detik, ulangi
+        --   world itu dari scan. Berhenti kalau gagal 5x berturut-turut tanpa kemajuan sama sekali.
         run = function(token, saved)
             if App.config.options.autoRejoin then Movement.queueResume() end
             local failures, mark = 0, nil
@@ -232,20 +288,35 @@ return function(G)
                 checkpoint(token)
                 local name = App.config.rotation.worlds[App.rotationIndex or 1]
                 problem = Movement.classifyFault(problem, token, name)
-                if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
-                    error(problem, 0)
-                end
-                local now = (App.stats.trees or 0) + (App.stats.broken or 0)
+                local left = type(problem) == "table" and problem.recoverable
+                if left and not App.config.options.autoRejoin then error(problem, 0) end
+                local now = (App.stats.trees or 0) + (App.stats.broken or 0) + (App.stats.replanted or 0)
                 if mark ~= now then failures = 0 end
                 failures, mark = failures + 1, now
-                assert(failures <= 3, "Rotation terganggu 3x tanpa kemajuan: " .. tostring(problem))
-                App.rotationRejoins = (App.rotationRejoins or 0) + 1
+                App.rotationLastError = os.date("%H:%M:%S") .. " " .. tostring(problem)
+                assert(failures <= 5, "Rotation gagal 5x tanpa kemajuan: " .. tostring(problem)
+                    .. ". Tekan Resume rotation setelah dicek.")
+                if left then App.rotationRejoins = (App.rotationRejoins or 0) + 1
+                else App.rotationRetries = (App.rotationRetries or 0) + 1 end
                 resume = { worldIndex = App.rotationIndex or 1 }
-                info("Keluar dari world (" .. tostring(problem) .. "). Masuk lagi dan lanjut rotasi...")
+                info((left and "Keluar dari world" or "Error") .. " (" .. tostring(problem) .. "). Ulangi world ini ("
+                    .. failures .. "/5)...")
+                Movement.releaseControls()
+                pause(3, token)
+                Movement.takeControls()
             end
         end,
         clear = function() Rotation.clearResume() end,
     })
+    -- Lanjut rotasi dari checkpoint (world terakhir yang dikerjakan). Dipakai tombol "Resume rotation"
+    -- setelah rotasi berhenti karena error, dan otomatis setelah pindah server.
+    function Rotation.resume()
+        local record = State.loadCheckpoint("rotation")
+        assert(record and type(record.data) == "table" and type(record.data.worldIndex) == "number",
+            "Tidak ada rotasi tersimpan. Nyalakan Rotation untuk mulai dari world pertama.")
+        App.config, App.profile = record.config, Core.profileName(record.profile)
+        G.Jobs.start("rotation", record.data)
+    end
     table.insert(G.resumeHandlers, 1, function()
         local record = State.loadCheckpoint("rotation")
         if not record or type(record.data) ~= "table" or type(record.data.worldIndex) ~= "number" then return false end
@@ -319,6 +390,11 @@ return function(G)
         G.Jobs.toggles.rotation = tab:Toggle({ Title = "Rotation", Value = false,
             Desc = "Jalan terus sampai di-stop. Mulai dari world pertama di list.",
             Callback = function(enabled) G.Jobs.setRunning("rotation", enabled) end })
+        tab:Button({ Title = "Resume rotation", Desc = "Lanjut dari world terakhir yang dikerjakan (setelah rotasi berhenti karena error atau script dimuat ulang).",
+            Callback = function()
+                local ok, message = pcall(Rotation.resume)
+                if not ok then G.notify(tostring(message)) end
+            end })
         syncing = false
         Rotation.refreshTab()
         table.insert(G.onConnected, function() pcall(Rotation.refreshTab) end)
