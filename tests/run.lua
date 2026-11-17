@@ -67,6 +67,31 @@ T.test("discover menemukan world, avatar, backpack, item, handler", function()
     T.eq(r.items, game.items, "items"); T.eq(r.ready, true, "ready")
     T.eq(r.handlers.plantSeed ~= nil, true, "plantSeed")
 end)
+T.test("hook tetap ketemu kalau fungsi game memegang pembungkus world (grid sama)", function()
+    local G, game, S = setup()
+    local proxy = { fg = game.world.fg } -- tabel lain, grid sama
+    for fn, ups in pairs(game.meta.up) do
+        for i, v in ipairs(ups) do if v == game.world then ups[i] = proxy end end
+    end
+    local r = G.Bridge.discover()
+    S.restore()
+    T.eq(r.ready, true, "ready: " .. table.concat(r.issues, " "))
+    T.eq(r.body ~= nil, true, "avatar")
+    local text = table.concat(G.App.discoveryReport, "\n")
+    T.eq(text:find("lewat grid", 1, true) ~= nil and text:find("langsung 0", 1, true) ~= nil, true, text)
+end)
+T.test("diagnostics detail muncul kalau hook hilang", function()
+    local G, game, S = setup()
+    for fn, ups in pairs(game.meta.up) do
+        for i, v in ipairs(ups) do if v == game.world then ups[i] = { other = true } end end
+    end
+    local r = G.Bridge.discover()
+    S.restore()
+    T.eq(r.ready, false, "tidak ready")
+    local text = table.concat(G.App.discoveryReport, "\n")
+    T.eq(text:find("Upvalue avatar.state", 1, true) ~= nil, true, text)
+    T.eq(text:find("Fungsi bernama di GC: setTile 1", 1, true) ~= nil, true, text)
+end)
 T.test("connect mencoba lagi saat world belum dimuat (found 0), lalu berhasil", function()
     local G, game, S = setup()
     game.worldCopies = 0

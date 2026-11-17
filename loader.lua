@@ -1,10 +1,10 @@
--- Growblox Hansel loader v0.2.0. File ini DIBUAT OTOMATIS oleh build.mjs dari loader.template.lua.
+-- Growblox Hansel loader v0.2.1. File ini DIBUAT OTOMATIS oleh build.mjs dari loader.template.lua.
 -- Cara pakai di executor:
 --   loadstring(game:HttpGet("<BASE>loader.lua"))()
 local BASE = "https://raw.githubusercontent.com/Hanselane/growblox-hansel/main/"
-local RELEASE = "6b2539e3e9978e66998f"
+local RELEASE = "c669ed0534316eeaf91d"
 local FILES = {
-    main = { path = "releases/6b2539e3e9978e66998f/main.lua", size = 150115, sum = 2972358921 },
+    main = { path = "releases/c669ed0534316eeaf91d/main.lua", size = 152593, sum = 2415035803 },
     windui = { path = "releases/windui-0e4a423c92d91599087e.lua", size = 1350010, sum = 1511812659 },
 }
 

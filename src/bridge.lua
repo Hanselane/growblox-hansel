@@ -61,9 +61,34 @@ return function(G)
         if scan then scan.names[fn] = name or false end
         return name
     end
+    -- Fungsi "milik" world kalau upvalue-nya memegang tabel world itu (cara Clarissv).
+    -- Cadangan (v0.2.1): upvalue berupa tabel lain yang memegang GRID yang sama (world.fg).
+    -- Ini menangani kasus world yang ketemu adalah pembungkus/salinan dari world yang dipakai game.
+    local ownership = { direct = 0, grid = 0 }
     local function owns(fn, world, scan)
-        for _, value in pairs(upvalues(fn, scan)) do if value == world then return true end end
-        return false
+        local viaGrid = false
+        for _, value in pairs(upvalues(fn, scan)) do
+            if value == world then ownership.direct = ownership.direct + 1; return true end
+            if not viaGrid and type(value) == "table" and type(world.fg) == "table"
+                and rawget(value, "fg") == world.fg then viaGrid = true end
+        end
+        if viaGrid then ownership.grid = ownership.grid + 1 end
+        return viaGrid
+    end
+    -- Ringkasan upvalue satu fungsi untuk diagnostics: tipe dan apakah mirip world.
+    local function describeUpvalues(fn, world, scan)
+        local parts = {}
+        for _, value in pairs(upvalues(fn, scan)) do
+            local kind = type(value)
+            if kind == "table" then
+                if value == world then kind = "WORLD"
+                elseif rawget(value, "fg") ~= nil then kind = rawget(value, "fg") == world.fg and "table(fg sama)" or "table(fg beda)"
+                elseif type(rawget(value, "backpackNow")) == "function" then kind = "table(mirip world)" end
+            end
+            table.insert(parts, kind)
+            if #parts >= 12 then break end
+        end
+        return #parts > 0 and table.concat(parts, ", ") or "kosong"
     end
     local function readField(value, key)
         local ok, field = pcall(function() return value[key] end)
@@ -262,6 +287,7 @@ return function(G)
         assert(type(X.getgc) == "function", "Executor harus punya getgc(true).")
         local scan, startedAt = newScan(), os.clock()
         App.discoveryReport = {}
+        ownership.direct, ownership.grid = 0, 0
         App.startupStage = "Membaca objek game"
         task.wait()
         local registry, registrySource = resolveRegistry(scan)
@@ -373,6 +399,20 @@ return function(G)
         local items, itemSource = resolveItems(world, registry, scan)
         local respawn, respawnSource = findRespawn(world, menus, scan)
         local treeRipe, harvestGear, treeRemaining = treeGrowthHooks(world, items, handlers, scan)
+        -- Detail tambahan saat ada hook hilang, untuk melacak perubahan di game.
+        if #issues > 0 then
+            if physics[1] then report("Upvalue avatar.state: " .. describeUpvalues(physics[1].state, world, scan)) end
+            report("Upvalue world.displayPut: " .. describeUpvalues(world.displayPut, world, scan))
+            local named = {}
+            for _, fn in ipairs(scan.functions) do
+                local name = functionName(fn, scan)
+                if name == "setTile" or name == "plantSeed" or name == "canPlace" then named[name] = (named[name] or 0) + 1 end
+            end
+            report(string.format("Fungsi bernama di GC: setTile %d, canPlace %d, plantSeed %d",
+                named.setTile or 0, named.canPlace or 0, named.plantSeed or 0))
+            report("World name: " .. tostring(world.name) .. "; w/h: " .. tostring(world.w) .. "/" .. tostring(world.h))
+        end
+        report("Kepemilikan: langsung " .. ownership.direct .. ", lewat grid " .. ownership.grid)
         local runtime = { world = world, body = body, controls = controls[1], inventory = inventory, items = items,
             handlers = handlers, issues = issues, ready = #issues == 0, gemHud = gemHud,
             picker = findWorldPicker(world, entries, scan), respawn = respawn,
