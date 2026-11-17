@@ -30,7 +30,7 @@ local function setup(options)
     world.takeDrop = function(uid, want)
         for _, drop in ipairs(drops) do
             if drop.uid == uid then
-                if math.abs(drop.x - avatar.x) > 3.2 then return 0 end -- server: kejauhan
+                if math.abs(drop.x - avatar.x) > (options.reach or 3.2) then return 0 end -- server: kejauhan
                 local amount = math.min(drop.n, want)
                 server[drop.id] = (server[drop.id] or 0) + amount
                 return amount
@@ -157,6 +157,30 @@ T.test("Auto take stock: ambil blok dari lantai lalu lanjut PNB", function()
     T.eq(math.abs(sim.avatar.x - 10.5) < 0.3, true, "balik ke posisi PNB")
 end)
 
+T.test("Auto take stock: stock tersebar, server cuma terima pungut dari dekat", function()
+    local sim = setup({ blocks = 1, autoStock = true, reach = 1.2, stock = { world = "PNBW", x = 3, y = 9 },
+        floor = { { id = BLOCK, n = 3, x = 1.5, y = 9.5 }, { id = BLOCK, n = 2, x = 4.5, y = 9.5 },
+            { id = BLOCK, n = 2, x = 7.5, y = 9.5 }, { id = BLOCK, n = 5, x = 15.5, y = 9.5 } } })
+    sim.G.Jobs.start("pnb")
+    waitJob(sim, 400)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.App.stats.broken, 8, "1 + 7 blok dari 3 tumpukan di area stock")
+    T.eq(#sim.drops >= 1 and sim.drops[1].x == 15.5, true, "tumpukan di luar area (x 15) tidak diambil")
+end)
+T.test("Perekam menampilkan panggilan jarang walau ada noise per frame", function()
+    local sim = setup()
+    sim.world.signText = function() end
+    sim.G.Pnb.record(1)
+    for i = 1, 200 do sim.world.signText(i % 7, 6) end -- noise: ratusan panggilan
+    sim.world.call("DropItem", SEED, 5)
+    sim.S.run(1.5)
+    sim.S.restore()
+    local text = table.concat(sim.App.recordReport, "\n")
+    T.eq(text:find('world.call("DropItem", 41, 5) x1', 1, true) ~= nil, true, text)
+    T.eq(text:find("signText(", 1, true) == nil, true, "noise tidak ditampilkan: " .. text)
+    T.eq(text:find("world.signText 200", 1, true) ~= nil, true, "noise diringkas: " .. text)
+end)
 T.test("Karakter terdorong dari spot: jalan balik dan PNB lanjut", function()
     local sim = setup({ blocks = 4 })
     sim.G.Jobs.start("pnb")

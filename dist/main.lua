@@ -1,5 +1,5 @@
--- Growblox Hansel v0.3.1. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.3.1"
+-- Growblox Hansel v0.3.2. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.2"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -3087,14 +3087,53 @@ return function(G)
     local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
 
     ---------------------------------------------------------------- stock & drop
-    -- Jalan ke posisi stock, pungut blok di lantai, lalu kembali. Return jumlah yang dipungut.
+    -- Ambil stock: di area stock (6 tile kiri-kanan, 3 atas, 2 bawah dari stock position), jalan ke
+    -- tumpukan blok terdekat, pungut, ulangi sampai tas penuh atau area kosong. Server Growblox
+    -- menolak pungut dari jauh, jadi karakter harus mendekat ke tiap tumpukan (seperti panen Clarissv).
+    -- Return: jumlah blok yang bertambah di tas (termasuk yang terpungut otomatis saat lewat).
+    local STOCK_AREA = { radius = 6, up = 3, down = 2 }
     function Pnb.takeStock(anchor, blockId, token)
-        local stock = App.config.points.stock
+        local stock, r = App.config.points.stock, Bridge.runtime()
         G.setStatus("Mengambil stock blok dari lantai...")
         Movement.moveTo(stock.x, stock.y, stock.world, token)
-        local collected = Drops.collectNear(stock, { blockId }, token, { radius = 1.5, up = 1.5, down = 1.25 })
+        local before = refreshInventory(token)[blockId] or 0
+        local skipped = {}
+        local function inArea(drop)
+            return drop.id == blockId and not drop.display and type(drop.n) == "number" and drop.n > 0
+                and type(drop.x) == "number" and type(drop.y) == "number" and not skipped[drop.uid]
+                and math.abs(drop.x - (stock.x + 0.5)) <= STOCK_AREA.radius
+                and drop.y >= stock.y - STOCK_AREA.up and drop.y <= stock.y + STOCK_AREA.down
+        end
+        for _ = 1, 60 do
+            checkpoint(token)
+            worldCheck(stock.world, token)
+            if r.inventory:room(blockId) <= 0 then break end
+            local state, nearest, best = position(), nil, math.huge
+            for _, drop in pairs(r.world.dropList()) do
+                if inArea(drop) then
+                    local distance = math.abs(drop.x - state.x) + math.abs(drop.y - (state.y - 0.5))
+                    if distance < best then nearest, best = drop, distance end
+                end
+            end
+            if not nearest then break end
+            local tile = { world = stock.world, x = math.floor(nearest.x), y = math.floor(nearest.y - 0.01) }
+            local ok, problem = pcall(Movement.moveTo, tile.x, tile.y, stock.world, token)
+            if not ok then
+                if type(problem) == "table" or tostring(problem) == "Stopped." then error(problem, 0) end
+                skipped[nearest.uid] = true -- tumpukan ini tidak terjangkau, coba yang lain
+            else
+                local got = Drops.collectNear(tile, { blockId }, token, { radius = 1.25, up = 1.5, down = 1.25 })
+                if (got[blockId] or 0) == 0 then
+                    for _, drop in pairs(r.world.dropList()) do
+                        if drop == nearest then skipped[nearest.uid] = true end -- masih ada = ditolak server
+                    end
+                end
+            end
+        end
+        local gained = (refreshInventory(token)[blockId] or 0) - before
+        App.stockDebug = "Stock: +" .. gained .. " blok, " .. (function() local n = 0; for _ in pairs(skipped) do n = n + 1 end; return n end)() .. " tumpukan dilewati"
         ensureAnchor(anchor, token)
-        return collected[blockId] or 0
+        return gained
     end
 
     -- Drop seed ke lantai. Caranya belum diketahui: perlu hasil "Rekam aksi drop".
@@ -3172,10 +3211,15 @@ return function(G)
     ---------------------------------------------------------------- perekam aksi game
     -- Bungkus sementara semua fungsi milik world dan touch controls, lalu catat setiap panggilan
     -- (nama + argumen) selama `seconds` detik. Dipakai untuk mencari perintah drop item.
+    -- Fungsi yang dipanggil tiap frame tidak dibungkus sama sekali (hemat & tidak bikin lag).
     local NOISY = { dir = true, jumping = true, dropList = true, backpackNow = true, state = true }
     local function describe(value)
         local kind = type(value)
-        if kind == "number" or kind == "boolean" then return tostring(value) end
+        if kind == "number" then
+            if value == math.floor(value) and math.abs(value) < 2^53 then return string.format("%d", value) end
+            return string.format("%.2f", value)
+        end
+        if kind == "boolean" then return tostring(value) end
         if kind == "string" then return string.format("%q", #value > 24 and value:sub(1, 24) .. "..." or value) end
         if kind == "table" then
             local n = 0
@@ -3187,18 +3231,24 @@ return function(G)
     function Pnb.record(seconds)
         Net.idle()
         local r = Bridge.runtime()
-        local log, counts, wrapped = {}, {}, {}
+        local order, counts, byName, wrapped, started = {}, {}, {}, {}, os.clock()
         local function wrap(owner, label)
+            if type(owner) ~= "table" then return end
             for key, fn in next, owner do
                 if type(fn) == "function" and not NOISY[key] then
-                    local original = fn
+                    local original, name = fn, label .. "." .. tostring(key)
                     local wrapper = function(...)
+                        byName[name] = (byName[name] or 0) + 1
                         local args = table.pack(...)
                         local parts = {}
                         for i = 1, math.min(args.n, 8) do parts[i] = describe(args[i]) end
-                        local signature = label .. "." .. tostring(key) .. "(" .. table.concat(parts, ", ") .. ")"
-                        counts[signature] = (counts[signature] or 0) + 1
-                        if counts[signature] == 1 and #log < 40 then table.insert(log, signature) end
+                        local signature = name .. "(" .. table.concat(parts, ", ") .. ")"
+                        if not counts[signature] then
+                            if #order >= 3000 then return original(...) end
+                            table.insert(order, { signature = signature, name = name, at = os.clock() - started })
+                            counts[signature] = 0
+                        end
+                        counts[signature] = counts[signature] + 1
                         return original(...)
                     end
                     table.insert(wrapped, { owner = owner, key = key, original = original, wrapper = wrapper })
@@ -3207,20 +3257,36 @@ return function(G)
         end
         wrap(r.world, "world")
         wrap(r.controls, "controls")
+        wrap(r.handlers, "handlers")
+        wrap(r.gemHud, "hud")
         for _, item in ipairs(wrapped) do rawset(item.owner, item.key, item.wrapper) end
         App.recording = true
-        App.recordReport = { "Rekaman berjalan..." }
+        App.recordReport = { "Rekaman berjalan... tunggu status 'Rekaman selesai'." }
         G.setStatus("Merekam " .. seconds .. " detik. Drop seed secara MANUAL sekarang. Copy diagnostics SETELAH status 'Rekaman selesai'.")
         task.delay(seconds, function()
             for _, item in ipairs(wrapped) do
                 if rawget(item.owner, item.key) == item.wrapper then rawset(item.owner, item.key, item.original) end
             end
             App.recording = false
+            -- Yang ditampilkan: semua world.call, lalu panggilan JARANG (<= 3x) = aksi manual.
+            -- Fungsi yang dipanggil ribuan kali (per frame) cuma diringkas jumlahnya.
             local report = {}
-            for _, signature in ipairs(log) do table.insert(report, signature .. " x" .. counts[signature]) end
-            if #report == 0 then report = { "Tidak ada panggilan tercatat. Coba drop seed lagi saat rekaman berjalan." } end
+            for _, entry in ipairs(order) do
+                if entry.name == "world.call" or (counts[entry.signature] <= 3 and byName[entry.name] <= 30) then
+                    if #report < 40 then
+                        table.insert(report, string.format("%.1fs  %s x%d", entry.at, entry.signature, counts[entry.signature]))
+                    end
+                end
+            end
+            if #report == 0 then table.insert(report, "Tidak ada panggilan jarang. Drop seed belum tercatat; coba lagi.") end
+            local busy = {}
+            for name, n in pairs(byName) do if n > 30 then table.insert(busy, { name = name, n = n }) end end
+            table.sort(busy, function(a, b) return a.n > b.n end)
+            local parts = {}
+            for i = 1, math.min(8, #busy) do parts[i] = busy[i].name .. " " .. busy[i].n end
+            if #parts > 0 then table.insert(report, "Sering (diabaikan): " .. table.concat(parts, ", ")) end
             App.recordReport = report
-            G.setStatus("Rekaman selesai (" .. #log .. " jenis panggilan). Copy diagnostics di Settings dan kirim.")
+            G.setStatus("Rekaman selesai. Copy diagnostics di Settings dan kirim.")
         end)
     end
 
@@ -3525,6 +3591,7 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
+            "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
             "PNB: blok " .. tostring(App.config.blockId) .. ", " .. #App.config.pnb.tiles .. " tile, auto stock "
                 .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop) .. ", balik ke spot " .. (App.pnbRecoveries or 0) .. "x",
