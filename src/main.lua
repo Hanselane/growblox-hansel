@@ -99,6 +99,7 @@ return function(modules, VERSION)
     G.Storage = modules.storage(G)
     G.Drops = modules.drops(G)
     G.Jobs = modules.jobs(G)
+    G.Scan = modules.scan(G)
     G.UI = modules.ui(G)
     G.Plant = modules.plant(G)
     G.Pnb = modules.pnb(G)
@@ -141,6 +142,10 @@ return function(modules, VERSION)
                 .. tostring(App.config.pnb.autoStock) .. ", auto drop " .. tostring(App.config.pnb.autoDrop) .. ", balik ke spot " .. (App.pnbRecoveries or 0) .. "x",
         }
         for _, line in ipairs(App.discoveryReport) do table.insert(lines, line) end
+        if App.scanReport then
+            table.insert(lines, "World Scan:")
+            for _, line in ipairs(App.scanReport) do table.insert(lines, "  " .. line) end
+        end
         if App.recordReport then
             table.insert(lines, "Rekaman aksi game:")
             for _, line in ipairs(App.recordReport) do table.insert(lines, "  " .. line) end

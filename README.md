@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.8**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.9**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -14,6 +14,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Tab di jendela](#tab-di-jendela)
 - [Place & Break](#place--break)
 - [Planting](#planting)
+- [World Scan](#world-scan)
 - [Settings](#settings)
 - [Menyambung ke game](#menyambung-ke-game)
 - [Data yang disimpan](#data-yang-disimpan)
@@ -30,6 +31,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Place & Break | Place & Break | Place/break dites di game. Pungut 5x5, stock, dan seed ke box: v0.3.5, dites offline |
 | Auto Collect | Place & Break | Selesai (v0.3.4), dites offline |
 | Planting | Planting | Selesai (v0.2.0), dites offline |
+| World Scan | Harvest | v0.3.9, dites offline. Langkah pertama Harvest |
 | Harvest | Harvest | Belum |
 | Rotation | Rotation | Belum |
 
@@ -58,7 +60,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 | --- | --- |
 | **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dan seed lewat Display Box. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
-| **Harvest** | Panen farm dan simpan hasilnya ke Display Box. Belum dibuat. |
+| **Harvest** | **World Scan** (pohon mateng/tumbuh, floating, blok, isi Display Box). Panen dibuat berikutnya. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
 | **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, Anti-AFK, Rejoin world and return to PNB, jeda dan batas waktu, **Unload script**, dan log aktivitas. |
 
@@ -163,6 +165,21 @@ Sebelum masuk world, progress disimpan: world ke berapa, baris terakhir, tile ya
 Kalau tidak lanjut otomatis, jalankan loader lagi lalu tekan **Resume planting**. Checkpoint berlaku 6 jam.
 
 Kalau task berhenti saat **mengambil seed dari box**, script menolak resume karena tidak tahu apakah seed sudah masuk tas. Cek tas dan box, lalu tekan **Clear saved planting** dan mulai lagi.
+
+## World Scan
+
+Mirip Growscan di Growtopia, untuk world yang sedang lo masuki. Buka tab **Harvest**, tekan **Scan world**. Semua dibaca dari memori game, tanpa request ke server.
+
+| Bagian | Isi |
+| --- | --- |
+| Pohon | Per jenis seed: jumlah pohon, yang mateng, yang tumbuh, dan kapan semuanya mateng |
+| Floating | Total item yang melayang per jenis (drop bertanda display tidak dihitung) |
+| Blok | Jumlah blok per jenis di world |
+| Display Box | Isi tiap box (maks 6 ditampilkan) |
+
+Status pohon dihitung dari waktu tanam + lama tumbuh item, sama seperti Claris Growblox. Sejak update Growblox 17 Nov 2026, hook pohon Claris tidak ketemu, jadi World Scan mencari tabel pohon dengan sidik jari: tabel di sekitar fungsi world yang punya data pohon di tile berisi seed. Baris `Data pohon` menjelaskan cara yang dipakai; `Contoh pohon` dan `Lama tumbuh item` membantu memastikan hasilnya benar. Hasil scan ikut ke **Copy diagnostics**.
+
+Batasan: hanya world yang sedang dimasuki, dan hasilnya snapshot (tekan scan lagi untuk update).
 
 ## Settings
 

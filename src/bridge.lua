@@ -453,12 +453,15 @@ return function(G)
         local runtime = { world = world, body = body, controls = controls[1], inventory = inventory, items = items,
             handlers = handlers, issues = issues, ready = #issues == 0, gemHud = gemHud,
             picker = findWorldPicker(world, entries, scan), respawn = respawn,
-            treeRipe = treeRipe, harvestGear = harvestGear, treeRemaining = treeRemaining }
+            treeRipe = treeRipe, harvestGear = harvestGear, treeRemaining = treeRemaining,
+            ownedFunctions = scan.owned } -- dipakai World Scan untuk mencari tabel pohon
 
         report("Item definitions: " .. itemSource)
         report("Hooks: " .. (#issues == 0 and "ready" or table.concat(issues, " ")))
         report("Planting hook: " .. (handlers.plantSeed and "ready" or ambiguous.plantSeed and "ambiguous" or "unavailable"))
-        report("Tree growth hook: " .. (treeRipe and "ready" or "unavailable"))
+        report("Tree growth hook: " .. (treeRipe and "ready" or ("unavailable (world.ride " .. type(world.ride)
+            .. ", setTree " .. (handlers.setTree and "ada" or ambiguous.setTree and "ambigu" or "tidak ada")
+            .. "); pakai World Scan di world farm")))
         report("Respawn: " .. respawnSource .. "; world picker: " .. (runtime.picker and "ready" or "unavailable"))
         report(string.format("Discovery: %d yields, %d upvalue reads, %.2fs", scan.yields, scan.reads, os.clock() - startedAt))
         App.startupStage = "Tersambung"

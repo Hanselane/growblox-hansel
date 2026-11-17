@@ -48,9 +48,8 @@ return function(G)
         UI.tabs.settings = window:Tab({ Title = "Settings", Icon = "settings" })
         G.Pnb.buildTab(UI.tabs.pnb)
         G.Plant.buildTab(UI.tabs.plant)
-        for _, key in ipairs({ "harvest", "rotation" }) do
-            UI.tabs[key]:Paragraph({ Title = "Belum dibuat", Desc = "Fitur ini ditambah di tahap berikutnya." })
-        end
+        G.Scan.buildTab(UI.tabs.harvest)
+        UI.tabs.rotation:Paragraph({ Title = "Belum dibuat", Desc = "Fitur ini ditambah di tahap berikutnya." })
 
         local s = UI.tabs.settings
         UI.status = UI.addStatus(s:Paragraph({ Title = "Status", Desc = App.status }))
