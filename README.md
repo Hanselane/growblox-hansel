@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.2.2**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.2.3**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) dan fitur **Planting**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -147,6 +147,8 @@ Setiap file ditulis dengan aman: ditulis ke `.pending` dulu dan dicek, versi lam
 **Copy diagnostics** menyalin versi, world, status, hasil pencarian objek game, dan 15 baris log terakhir. Kirim teks itu saat melaporkan masalah.
 
 ## Pertanyaan umum
+
+**Kenapa versi baru belum muncul?** GitHub menyimpan `main/loader.lua` di cache sampai 5 menit. Tunggu sebentar lalu execute ulang. Auto-resume setelah pindah server tidak terpengaruh: ia selalu memakai versi yang sama dengan yang sedang jalan.
 
 **Apakah harus download ulang setiap kali?** Tidak. Rilis yang sama diambil dari cache. Download baru hanya terjadi saat ada rilis baru.
 

@@ -1,5 +1,5 @@
--- Growblox Hansel v0.2.2. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.2.2"
+-- Growblox Hansel v0.2.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.2.3"
 local __modules = {}
 
 -- ===== src/core.lua =====

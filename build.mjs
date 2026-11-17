@@ -58,12 +58,18 @@ for (const file of Object.values(files)) {
 // 3) Loader
 const entries = Object.entries(files).map(([name, f]) =>
   `    ${name} = { path = ${JSON.stringify(f.path)}, size = ${size(f.text)}, sum = ${adler32(f.text)} },`).join("\n");
-const loader = readFileSync("loader.template.lua", "utf8")
+const draft = readFileSync("loader.template.lua", "utf8")
   .replace("__VERSION__", VERSION)
   .replace("__BASE__", JSON.stringify(BASE))
   .replace("__RELEASE__", JSON.stringify(release))
   .replace("__FILES__", entries);
+// Salinan permanen loader ini untuk auto-resume. Namanya dari hash isi loader (dengan placeholder),
+// jadi versi berbeda = path berbeda, dan path yang sama tidak pernah berubah isi.
+const selfPath = `releases/loader-${hash(draft)}.lua`;
+const loader = draft.replace("__SELF__", JSON.stringify(selfPath));
 writeFileSync("loader.lua", loader);
+if (!existsSync(selfPath)) writeFileSync(selfPath, loader);
+else if (readFileSync(selfPath, "utf8") !== loader) throw new Error(`${selfPath} sudah ada dengan isi berbeda`);
 
 console.log(`v${VERSION} rilis ${release} | main ${size(main)} byte | loader -> ${BASE}loader.lua`);
 if (user === "USERNAME") console.log("PERINGATAN: isi github.user di package.json dengan username GitHub lo, lalu build ulang.");

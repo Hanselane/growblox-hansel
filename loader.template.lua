@@ -74,7 +74,9 @@ end
 local windui, problem = loadstring(results.windui[2], "WindUI")
 assert(windui, problem)
 env.GrowbloxHanselWindUI = windui()
-env.GrowbloxHanselLoaderURL = BASE .. "loader.lua" -- dipakai auto-resume setelah pindah server
+-- Auto-resume setelah pindah server memakai salinan loader INI (path permanen per versi), bukan
+-- main/loader.lua. Path main bisa kena cache GitHub 5 menit dan memuat versi lama.
+env.GrowbloxHanselLoaderURL = BASE .. __SELF__
 env.GrowbloxHanselLoaderDebug = "Rilis " .. RELEASE .. ": main " .. results.main[3] .. ", WindUI " .. results.windui[3]
 
 local chunk

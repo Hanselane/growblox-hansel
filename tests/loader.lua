@@ -71,6 +71,11 @@ T.test("loader download, cek checksum, lalu menjalankan main", function()
     T.eq(env.GrowbloxHanselLoaderDebug:find("main download", 1, true) ~= nil, true, env.GrowbloxHanselLoaderDebug)
     App.alive = false
 end)
+T.test("auto-resume menunjuk salinan loader permanen yang isinya sama", function()
+    local url = env.GrowbloxHanselLoaderURL
+    T.eq(url:match("releases/loader%-%x+%.lua$") ~= nil, true, url)
+    T.eq(read(url:sub(#BASE + 1)), loaderSource, "isi salinan = loader.lua")
+end)
 T.test("load kedua pakai cache, tanpa download", function()
     downloads = {}
     local App = runLoader()
