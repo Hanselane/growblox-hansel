@@ -5,7 +5,8 @@
 return function(G)
     local App, Bridge, Net, Actions, Movement = G.App, G.Bridge, G.Net, G.Actions, G.Movement
     local Drops = { GEM = 112 }
-    local worldCheck, position, pause = Bridge.worldCheck, Bridge.position, Net.pause
+    local worldCheck, position, pause, checkpoint = Bridge.worldCheck, Bridge.position, Net.pause, Net.checkpoint
+
 
     -- Kirim maksimal 8 permintaan pickup sekaligus, lalu tunggu semua balasan.
     -- Tiap drop "dipesan" dulu (drop.taking) supaya pickup bawaan game tidak mengambil yang sama.
@@ -123,6 +124,78 @@ return function(G)
                 end
             end
         end)
+    end
+
+    -- Jangkauan pungut server Growblox (dari Clarissv collectDrops): 1.25 tile ke samping,
+    -- 1.5 ke atas, 1.25 ke bawah dari tile tempat berdiri. Lebih jauh dari itu ditolak server.
+    Drops.REACH = { radius = 1.25, up = 1.5, down = 1.25 }
+
+    -- Pungut semua drop `ids` di dalam `area` sekitar `anchor`. Yang di luar jangkauan server
+    -- didatangi: cari lantai terdekat yang bisa dipakai memungut (Navigation.pickupGoal, sama
+    -- seperti panen Clarissv), jalan ke sana, pungut, lanjut ke drop berikutnya.
+    -- Karakter TIDAK dikembalikan ke anchor; pemanggil yang mengurus (ensureAnchor).
+    -- options: { filter(drop) -> bool, maxTrips (bawaan 40), onTrip(drop) }
+    -- Return: { [id] = jumlah }, jumlah drop yang dilewati (tidak terjangkau / ditolak).
+    function Drops.collectArea(anchor, ids, token, area, options)
+        options = options or {}
+        local r = worldCheck(anchor.world, token)
+        local total, skipped, attempts = {}, {}, {}
+        local function add(got)
+            for id, n in pairs(got or {}) do total[id] = (total[id] or 0) + n end
+        end
+        local all, wanted = ids == "all", {}
+        if not all then for _, id in ipairs(ids) do wanted[id] = true end end
+        local function inArea(drop)
+            return not drop.display and type(drop.uid) == "number" and type(drop.n) == "number" and drop.n > 0
+                and (all or wanted[drop.id]) and type(drop.x) == "number" and type(drop.y) == "number"
+                and not skipped[drop.uid] and (not options.filter or options.filter(drop))
+                and (drop.id == Drops.GEM or r.inventory:room(drop.id) > 0)
+                and math.abs(drop.x - (anchor.x + 0.5)) <= area.radius
+                and drop.y >= anchor.y - area.up and drop.y <= anchor.y + area.down
+        end
+        -- 1) yang sudah terjangkau dari posisi sekarang
+        local here = position()
+        local stand = { world = anchor.world, x = math.floor(here.x), y = math.floor(here.y - 0.01) }
+        add(Drops.collectNear(stand, ids, token, { radius = Drops.REACH.radius, up = Drops.REACH.up,
+            down = Drops.REACH.down, attempts = attempts }))
+        -- 2) datangi sisanya satu per satu, terdekat dulu
+        for _ = 1, options.maxTrips or 40 do
+            checkpoint(token)
+            local state, nearest, best = position(), nil, math.huge
+            for _, drop in pairs(r.world.dropList()) do
+                if inArea(drop) then
+                    local d = math.abs(drop.x - state.x) + math.abs(drop.y - (state.y - 0.5)) * 2
+                    if d < best then nearest, best = drop, d end
+                end
+            end
+            if not nearest then break end
+            local goal = G.Navigation.pickupGoal(Movement.navigationMap(r), state, nearest, {
+                step = function() pause(0, token); worldCheck(anchor.world, token) end })
+            if not goal then
+                skipped[nearest.uid] = true -- tidak ada lantai yang bisa dipakai memungut
+            else
+                if options.onTrip then options.onTrip(nearest) end
+                local ok, problem = pcall(Movement.moveTo, goal.x, goal.y, anchor.world, token)
+                if not ok then
+                    if type(problem) == "table" or tostring(problem):find("Stopped", 1, true) then error(problem, 0) end
+                    skipped[nearest.uid] = true
+                else
+                    local spot = { world = anchor.world, x = goal.x, y = goal.y }
+                    local got = Drops.collectNear(spot, ids, token, { radius = Drops.REACH.radius,
+                        up = Drops.REACH.up, down = Drops.REACH.down, attempts = attempts })
+                    add(got)
+                    for _, drop in pairs(r.world.dropList()) do
+                        if drop == nearest and drop.n > 0 then
+                            -- masih ada setelah didatangi = server menolak 3x; jangan diulang terus
+                            if (attempts[drop.uid] or 0) >= 3 or not (got and next(got)) then skipped[drop.uid] = true end
+                        end
+                    end
+                end
+            end
+        end
+        local n = 0
+        for _ in pairs(skipped) do n = n + 1 end
+        return total, n
     end
 
     return Drops

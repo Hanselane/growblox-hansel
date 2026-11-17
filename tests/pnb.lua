@@ -111,7 +111,7 @@ local function setup(options)
             S.task.wait(dt)
         end
     end)
-    return { G = G, S = S, App = App, world = world, server = server, drops = drops, avatar = avatar }
+    return { G = G, S = S, App = App, world = world, server = server, drops = drops, avatar = avatar, items = items }
 end
 
 local function waitJob(sim, seconds)
@@ -244,7 +244,7 @@ T.test("Karakter terdorong dari spot: jalan balik dan PNB lanjut", function()
     sim.S.restore()
     T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
     T.eq(sim.App.stats.broken, 4, "semua blok tetap dipecah")
-    T.eq((sim.App.pnbRecoveries or 0) >= 1, true, "ada pemulihan")
+    T.eq(math.abs(sim.avatar.x - 10.5) < 0.35, true, "kembali ke spot PNB: x " .. sim.avatar.x)
 end)
 T.test("Tile yang terisi blok lain dilewati, tile lain tetap jalan", function()
     local sim = setup({ blocks = 2, extra = { ["9:8"] = DIRT } }) -- tile kiri atas sudah ada Dirt
@@ -263,15 +263,48 @@ T.test("Semua tile terhalang: berhenti dengan pesan jelas", function()
     T.eq((sim.App.lastError or ""):find("terhalang", 1, true) ~= nil, true, tostring(sim.App.lastError))
 end)
 
-T.test("Auto drop seed tanpa hasil rekaman: berhenti dengan petunjuk", function()
+T.test("Auto drop seed: seed ditaruh ke Display Box (DisplayItem), lalu PNB lanjut", function()
     local sim = setup({ blocks = 3 })
+    local BOX = 1422
+    sim.world.fg[9][15] = BOX
+    sim.items[BOX].solid = false
+    local rows = {}
+    sim.world.displays = { get = function(x, y) if x == 15 and y == 9 then return rows end end }
+    local call = sim.world.call
+    sim.world.call = function(method, x, y, id, a, b, amount)
+        if method == "DisplayItem" and id ~= nil then
+            assert(x == 15 and y == 9 and amount <= sim.server[id])
+            sim.server[id] = sim.server[id] - amount
+            if rows[1] then rows[1][2] = rows[1][2] + amount else rows[1] = { id, amount } end
+            return true, {}
+        end
+        return call(method, x, y, id)
+    end
     sim.App.config.pnb.autoDrop = true
-    sim.App.config.points.seedDrop = { world = "PNBW", x = 15, y = 9 }
-    sim.App.config.options.seedThreshold = 1
+    sim.App.config.points.seedDrop = { world = "PNBW", x = 15, y = 9, standX = 14, standY = 9 }
+    sim.App.config.options.seedThreshold = 2
     sim.G.Jobs.start("pnb")
-    waitJob(sim, 120)
+    waitJob(sim, 200)
     sim.S.restore()
-    T.eq((sim.App.lastError or ""):find("Rekam aksi drop", 1, true) ~= nil, true, tostring(sim.App.lastError))
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.App.stats.broken, 3, "PNB tetap jalan sampai blok habis")
+    T.eq(rows[1] and rows[1][1] == SEED and rows[1][2] >= 2, true, "seed masuk box")
+end)
+T.test("Profil lama: seed drop tanpa box dibuang, bukan bikin profil rusak", function()
+    local out = Core.validate({ blockId = 40, points = { seedDrop = { world = "PNBW", x = 15, y = 9 } } })
+    T.eq(out.points.seedDrop, nil)
+end)
+
+T.test("PNB 5x5: drop di pinggir grid (2 tile, di luar jangkauan server) tetap terambil", function()
+    local sim = setup({ blocks = 2, reach = 1.3, tiles = { { dx = -2, dy = -1 }, { dx = 2, dy = -1 } } })
+    sim.G.Jobs.start("pnb")
+    waitJob(sim, 200)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.App.stats.broken, 2)
+    T.eq(sim.server[SEED], 2, "2 seed dari tile x 8 dan x 12 terambil")
+    T.eq(#sim.drops, 0, "lantai bersih")
+    T.eq(math.abs(sim.avatar.x - 10.5) < 0.35, true, "balik ke spot")
 end)
 
 T.test("Perekam mencatat panggilan game lalu memulihkan fungsi asli", function()

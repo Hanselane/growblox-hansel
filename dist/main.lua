@@ -1,5 +1,5 @@
--- Growblox Hansel v0.3.4. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.3.4"
+-- Growblox Hansel v0.3.5. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.5"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -11,7 +11,7 @@ local Core = {}
 Core.CONFIG_VERSION = 1
 Core.POINTS = { "pnb", "blockBox", "seedBox", "farmBox", "plantBox", "stock", "seedDrop" }
 -- Titik yang berupa TEMPAT BERDIRI (bukan box), jadi tidak butuh standX/standY.
-Core.STAND_POINTS = { pnb = true, stock = true, seedDrop = true }
+Core.STAND_POINTS = { pnb = true, stock = true }
 Core.COLLECT_FILTERS = { "all", "gems", "crop" }
 
 -- Angka yang boleh diatur user: { minimum, maksimum, bawaan }.
@@ -120,6 +120,8 @@ function Core.validate(input)
     assert(type(points) == "table", "Bagian points di profil rusak.")
     for _, key in ipairs(Core.POINTS) do
         local point = points[key]
+        -- seedDrop versi lama (<= 0.3.4) = titik lantai tanpa box; dibuang, set ulang di samping Display Box.
+        if key == "seedDrop" and type(point) == "table" and point.standX == nil then point = nil end
         if point ~= nil then
             assert(type(point) == "table", "Titik tersimpan rusak: " .. key)
             local copy = { world = Core.worldName(point.world) }
@@ -321,7 +323,7 @@ function Core.checkSetup(config, mode, items)
             assert(not point or point.world == spot.world, "Posisi " .. key .. " harus di world yang sama dengan PNB.")
         end
         if config.pnb.autoStock then assert(config.points.stock, "Set stock position dulu, atau matikan Auto take stock.") end
-        if config.pnb.autoDrop then assert(config.points.seedDrop, "Set seed drop position dulu, atau matikan Auto drop seed.") end
+        if config.pnb.autoDrop then assert(config.points.seedDrop, "Set seed drop position (berdiri di samping Display Box) dulu, atau matikan Auto drop seed.") end
         return true
     end
     error("Unknown farming task: " .. tostring(mode))
@@ -1996,7 +1998,8 @@ __modules["drops"] = (function(...)
 return function(G)
     local App, Bridge, Net, Actions, Movement = G.App, G.Bridge, G.Net, G.Actions, G.Movement
     local Drops = { GEM = 112 }
-    local worldCheck, position, pause = Bridge.worldCheck, Bridge.position, Net.pause
+    local worldCheck, position, pause, checkpoint = Bridge.worldCheck, Bridge.position, Net.pause, Net.checkpoint
+
 
     -- Kirim maksimal 8 permintaan pickup sekaligus, lalu tunggu semua balasan.
     -- Tiap drop "dipesan" dulu (drop.taking) supaya pickup bawaan game tidak mengambil yang sama.
@@ -2114,6 +2117,78 @@ return function(G)
                 end
             end
         end)
+    end
+
+    -- Jangkauan pungut server Growblox (dari Clarissv collectDrops): 1.25 tile ke samping,
+    -- 1.5 ke atas, 1.25 ke bawah dari tile tempat berdiri. Lebih jauh dari itu ditolak server.
+    Drops.REACH = { radius = 1.25, up = 1.5, down = 1.25 }
+
+    -- Pungut semua drop `ids` di dalam `area` sekitar `anchor`. Yang di luar jangkauan server
+    -- didatangi: cari lantai terdekat yang bisa dipakai memungut (Navigation.pickupGoal, sama
+    -- seperti panen Clarissv), jalan ke sana, pungut, lanjut ke drop berikutnya.
+    -- Karakter TIDAK dikembalikan ke anchor; pemanggil yang mengurus (ensureAnchor).
+    -- options: { filter(drop) -> bool, maxTrips (bawaan 40), onTrip(drop) }
+    -- Return: { [id] = jumlah }, jumlah drop yang dilewati (tidak terjangkau / ditolak).
+    function Drops.collectArea(anchor, ids, token, area, options)
+        options = options or {}
+        local r = worldCheck(anchor.world, token)
+        local total, skipped, attempts = {}, {}, {}
+        local function add(got)
+            for id, n in pairs(got or {}) do total[id] = (total[id] or 0) + n end
+        end
+        local all, wanted = ids == "all", {}
+        if not all then for _, id in ipairs(ids) do wanted[id] = true end end
+        local function inArea(drop)
+            return not drop.display and type(drop.uid) == "number" and type(drop.n) == "number" and drop.n > 0
+                and (all or wanted[drop.id]) and type(drop.x) == "number" and type(drop.y) == "number"
+                and not skipped[drop.uid] and (not options.filter or options.filter(drop))
+                and (drop.id == Drops.GEM or r.inventory:room(drop.id) > 0)
+                and math.abs(drop.x - (anchor.x + 0.5)) <= area.radius
+                and drop.y >= anchor.y - area.up and drop.y <= anchor.y + area.down
+        end
+        -- 1) yang sudah terjangkau dari posisi sekarang
+        local here = position()
+        local stand = { world = anchor.world, x = math.floor(here.x), y = math.floor(here.y - 0.01) }
+        add(Drops.collectNear(stand, ids, token, { radius = Drops.REACH.radius, up = Drops.REACH.up,
+            down = Drops.REACH.down, attempts = attempts }))
+        -- 2) datangi sisanya satu per satu, terdekat dulu
+        for _ = 1, options.maxTrips or 40 do
+            checkpoint(token)
+            local state, nearest, best = position(), nil, math.huge
+            for _, drop in pairs(r.world.dropList()) do
+                if inArea(drop) then
+                    local d = math.abs(drop.x - state.x) + math.abs(drop.y - (state.y - 0.5)) * 2
+                    if d < best then nearest, best = drop, d end
+                end
+            end
+            if not nearest then break end
+            local goal = G.Navigation.pickupGoal(Movement.navigationMap(r), state, nearest, {
+                step = function() pause(0, token); worldCheck(anchor.world, token) end })
+            if not goal then
+                skipped[nearest.uid] = true -- tidak ada lantai yang bisa dipakai memungut
+            else
+                if options.onTrip then options.onTrip(nearest) end
+                local ok, problem = pcall(Movement.moveTo, goal.x, goal.y, anchor.world, token)
+                if not ok then
+                    if type(problem) == "table" or tostring(problem):find("Stopped", 1, true) then error(problem, 0) end
+                    skipped[nearest.uid] = true
+                else
+                    local spot = { world = anchor.world, x = goal.x, y = goal.y }
+                    local got = Drops.collectNear(spot, ids, token, { radius = Drops.REACH.radius,
+                        up = Drops.REACH.up, down = Drops.REACH.down, attempts = attempts })
+                    add(got)
+                    for _, drop in pairs(r.world.dropList()) do
+                        if drop == nearest and drop.n > 0 then
+                            -- masih ada setelah didatangi = server menolak 3x; jangan diulang terus
+                            if (attempts[drop.uid] or 0) >= 3 or not (got and next(got)) then skipped[drop.uid] = true end
+                        end
+                    end
+                end
+            end
+        end
+        local n = 0
+        for _ in pairs(skipped) do n = n + 1 end
+        return total, n
     end
 
     return Drops
@@ -3097,65 +3172,52 @@ return function(G)
     -- Area pungut di sekitar grid 5x5: 2,75 tile ke samping, 3 ke atas, 2,5 ke bawah.
     local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
 
-    ---------------------------------------------------------------- stock & drop
-    -- Ambil stock: di area stock (6 tile kiri-kanan, 3 atas, 2 bawah dari stock position), jalan ke
-    -- tumpukan blok terdekat, pungut, ulangi sampai tas penuh atau area kosong. Server Growblox
-    -- menolak pungut dari jauh, jadi karakter harus mendekat ke tiap tumpukan (seperti panen Clarissv).
+    ---------------------------------------------------------------- stock & seed
+    -- Ambil stock dari lantai: ke stock position, lalu datangi tiap tumpukan blok di area stock
+    -- (6 tile kiri-kanan, 3 atas, 2 bawah). Server cuma terima pungut dari jarak ~1 tile, jadi
+    -- karakter berdiri di lantai terdekat tiap tumpukan (Drops.collectArea, cara panen Clarissv).
     -- Return: jumlah blok yang bertambah di tas (termasuk yang terpungut otomatis saat lewat).
     local STOCK_AREA = { radius = 6, up = 3, down = 2 }
     function Pnb.takeStock(anchor, blockId, token)
-        local stock, r = App.config.points.stock, Bridge.runtime()
+        local stock = App.config.points.stock
         G.setStatus("Mengambil stock blok dari lantai...")
         Movement.moveTo(stock.x, stock.y, stock.world, token)
         local before = refreshInventory(token)[blockId] or 0
-        local skipped = {}
-        local function inArea(drop)
-            return drop.id == blockId and not drop.display and type(drop.n) == "number" and drop.n > 0
-                and type(drop.x) == "number" and type(drop.y) == "number" and not skipped[drop.uid]
-                and math.abs(drop.x - (stock.x + 0.5)) <= STOCK_AREA.radius
-                and drop.y >= stock.y - STOCK_AREA.up and drop.y <= stock.y + STOCK_AREA.down
-        end
-        for _ = 1, 60 do
-            checkpoint(token)
-            worldCheck(stock.world, token)
-            if r.inventory:room(blockId) <= 0 then break end
-            local state, nearest, best = position(), nil, math.huge
-            for _, drop in pairs(r.world.dropList()) do
-                if inArea(drop) then
-                    local distance = math.abs(drop.x - state.x) + math.abs(drop.y - (state.y - 0.5))
-                    if distance < best then nearest, best = drop, distance end
-                end
-            end
-            if not nearest then break end
-            local tile = { world = stock.world, x = math.floor(nearest.x), y = math.floor(nearest.y - 0.01) }
-            local ok, problem = pcall(Movement.moveTo, tile.x, tile.y, stock.world, token)
-            if not ok then
-                if type(problem) == "table" or tostring(problem) == "Stopped." then error(problem, 0) end
-                skipped[nearest.uid] = true -- tumpukan ini tidak terjangkau, coba yang lain
-            else
-                local got = Drops.collectNear(tile, { blockId }, token, { radius = 1.25, up = 1.5, down = 1.25 })
-                if (got[blockId] or 0) == 0 then
-                    for _, drop in pairs(r.world.dropList()) do
-                        if drop == nearest then skipped[nearest.uid] = true end -- masih ada = ditolak server
-                    end
-                end
-            end
-        end
+        local _, skipped = Drops.collectArea(stock, { blockId }, token, STOCK_AREA, {
+            onTrip = function() G.setStatus("Mengambil stock: jalan ke tumpukan blok...") end })
         local gained = (refreshInventory(token)[blockId] or 0) - before
-        App.stockDebug = "Stock: +" .. gained .. " blok, " .. (function() local n = 0; for _ in pairs(skipped) do n = n + 1 end; return n end)() .. " tumpukan dilewati"
+        App.stockDebug = "+" .. gained .. " blok, " .. skipped .. " tumpukan tidak terjangkau"
         ensureAnchor(anchor, token)
         return gained
     end
 
-    -- Drop seed ke lantai. Caranya belum diketahui: perlu hasil "Rekam aksi drop".
-    -- Pnb.dropMethod diisi setelah rekaman membuktikan perintah drop yang dipakai game.
+    -- Auto drop seed = taruh seed ke Display Box (sama seperti PNB Clarissv: "Putting seeds into
+    -- the left storage box", world.call("DisplayItem", ...)). Drop ke lantai tidak dipakai karena
+    -- belum ada perintah server yang diketahui untuk itu.
     function Pnb.dropSeeds(anchor, seedId, token)
-        assert(Pnb.dropMethod, "Auto drop seed belum bisa dipakai: tekan 'Rekam aksi drop', drop seed manual sekali, lalu kirim diagnostics.")
-        local spot = App.config.points.seedDrop
-        G.setStatus("Drop seed di posisi drop...")
-        Movement.moveTo(spot.x, spot.y, spot.world, token)
-        Pnb.dropMethod(seedId, count(seedId), token)
+        local box = App.config.points.seedDrop
+        G.setStatus("Menaruh seed ke Display Box...")
+        G.Storage.deposit(box, seedId, count(seedId), token)
         refreshInventory(token)
+        ensureAnchor(anchor, token)
+    end
+
+    -- Pungut hasil PNB: semua blok/seed/gem (atau semua item kalau Auto Collect nyala) di area
+    -- grid 5x5. Tile di pinggir grid (2 tile dari karakter) di luar jangkauan server, jadi
+    -- karakter melangkah ke sana, memungut, lalu kembali ke posisi PNB.
+    local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
+    function Pnb.collect(anchor, pickupIds, token)
+        local ids, area = pickupIds, GRID_AREA
+        if App.config.options.autoCollect then
+            local range = App.config.options.collectRange
+            ids = "all"
+            area = { radius = math.max(GRID_AREA.radius, range), up = math.max(GRID_AREA.up, range),
+                down = math.max(GRID_AREA.down, range) }
+        end
+        local got = Drops.collectArea(anchor, ids, token, area)
+        local n = 0
+        for _, amount in pairs(got) do n = n + amount end
+        App.pnbCollected = (App.pnbCollected or 0) + n
         ensureAnchor(anchor, token)
     end
 
@@ -3219,7 +3281,7 @@ return function(G)
             local targets, existing = Pnb.targets(anchor), false
             for _, point in ipairs(targets) do if tileAt(point.x, point.y) == blockId then existing = true end end
             if count(blockId) == 0 and not existing then
-                Drops.collectNear(anchor, pickupIds, token, GRID_AREA)
+                Pnb.collect(anchor, pickupIds, token)
                 if count(blockId) == 0 then
                     if App.config.pnb.autoStock and Pnb.takeStock(anchor, blockId, token) > 0 then
                         refreshInventory(token)
@@ -3241,16 +3303,8 @@ return function(G)
                 if tileAt(point.x, point.y) == blockId then breakTile(anchor, point, blockId, token) end
             end
             assert(worked, "Semua tile PNB terhalang blok lain. Kosongkan tile yang dipilih atau pilih tile lain.")
-            if App.config.options.autoCollect then
-                -- Auto Collect nyala: pungut SEMUA item di area PNB + jangkauan Auto Collect.
-                G.setStatus("Auto collect: memungut semua item di sekitar...")
-                local range = App.config.options.collectRange
-                Drops.collectNear(anchor, "all", token, { radius = math.max(GRID_AREA.radius, range),
-                    up = math.max(GRID_AREA.up, range), down = math.max(GRID_AREA.down, range) })
-            else
-                G.setStatus("Collecting gems, seeds, and returned blocks...")
-                Drops.collectNear(anchor, pickupIds, token, GRID_AREA)
-            end
+            G.setStatus("Collecting gems, seeds, and returned blocks...")
+            Pnb.collect(anchor, pickupIds, token)
         end
     end
 
@@ -3490,8 +3544,7 @@ return function(G)
             UI.paragraph(controls.grid, "PNB tiles", Pnb.gridText())
             UI.paragraph(controls.stock, "Stock position", App.config.points.stock
                 and (App.config.points.stock.world .. "  |  tile " .. App.config.points.stock.x .. ", " .. App.config.points.stock.y) or "Belum diset")
-            UI.paragraph(controls.drop, "Seed drop position", App.config.points.seedDrop
-                and (App.config.points.seedDrop.world .. "  |  tile " .. App.config.points.seedDrop.x .. ", " .. App.config.points.seedDrop.y) or "Belum diset")
+            UI.paragraph(controls.drop, "Seed drop (Display Box)", G.Storage.pointText(App.config.points.seedDrop))
         end
         local function setOption(fn)
             if syncing then return end
@@ -3533,20 +3586,18 @@ return function(G)
             Desc = "Blok di tas habis: jalan ke stock position, pungut blok di lantai, lalu lanjut PNB.",
             Callback = function(enabled) setOption(function() App.config.pnb.autoStock = enabled == true end) end })
 
-        controls.drop = tab:Paragraph({ Title = "Seed drop position", Desc = "Belum diset" })
-        tab:Button({ Title = "Set seed drop position here", Callback = UI.action(function()
-            App.config.points.seedDrop = Pnb.standingTile()
+        controls.drop = tab:Paragraph({ Title = "Seed drop (Display Box)", Desc = "Belum diset" })
+        tab:Button({ Title = "Set seed drop position here", Desc = "Berdiri di samping Display Box tempat seed ditaruh.", Callback = UI.action(function()
+            local box = G.Storage.captureNearby("seedDrop", "box")
             Pnb.refreshTab()
-            G.setStatus("Seed drop position disimpan.")
+            G.setStatus("Display Box seed disimpan: tile " .. box.x .. ", " .. box.y .. ".")
         end) })
         controls.autoDrop = tab:Toggle({ Title = "Auto drop seed", Value = App.config.pnb.autoDrop,
-            Desc = "Seed di tas mencapai batas: jalan ke drop position dan drop seed. Butuh hasil 'Rekam aksi drop'.",
+            Desc = "Seed di tas mencapai batas: jalan ke Display Box seed, taruh semua seed, lalu lanjut PNB.",
             Callback = function(enabled) setOption(function() App.config.pnb.autoDrop = enabled == true end) end })
         tab:Slider({ Title = "Drop seed saat seed di tas >=", Step = 1,
             Value = { Min = 1, Max = 200, Default = App.config.options.seedThreshold },
             Callback = function(value) setOption(function() App.config.options.seedThreshold = math.floor(tonumber(value)) end) end })
-        tab:Button({ Title = "Rekam aksi drop (30 detik)", Desc = "Tekan, lalu drop seed MANUAL sekali. Hasilnya muncul di Copy diagnostics.",
-            Callback = function() local ok, message = pcall(Pnb.record, 30); if not ok then G.notify(tostring(message)) end end })
 
         controls.grid = tab:Paragraph({ Title = "PNB tiles", Desc = Pnb.gridText() })
         tab:Button({ Title = "Atur PNB tiles (5x5)", Desc = "Buka panel kotak 5x5. Kotak tengah = lo. Klik kotak lain untuk dipilih.",

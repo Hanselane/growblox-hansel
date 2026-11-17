@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.4**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.5**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -26,7 +26,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Fitur | Tab | Status |
 | --- | --- | --- |
 | Pondasi: connect, retry, simpan setting, loader GitHub | Settings | Selesai, dites di game (v0.1.0) |
-| Place & Break | Place & Break | Selesai (v0.3.0), dites di game. Auto drop seed menunggu hasil rekaman |
+| Place & Break | Place & Break | Place/break dites di game. Pungut 5x5, stock, dan seed ke box: v0.3.5, dites offline |
 | Auto Collect | Place & Break | Selesai (v0.3.4), dites offline |
 | Planting | Planting | Selesai (v0.2.0), dites offline |
 | Harvest | Harvest | Belum |
@@ -55,7 +55,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 
 | Tab | Isi |
 | --- | --- |
-| **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dari lantai, drop seed, perekam aksi game. |
+| **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dari lantai, seed ke Display Box. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | Panen farm dan simpan hasilnya ke Display Box. Belum dibuat. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
@@ -71,6 +71,7 @@ Place & Break menaruh blok di tile yang dipilih di sekitar karakter, memukulnya 
 - Izin edit di area PNB.
 - Tile yang dipilih kosong. Tile yang berisi blok lain dilewati, tidak dipukul.
 - Untuk **Auto take stock**: blok stock berserakan di lantai, di world yang sama dengan PNB.
+- Untuk **Auto drop seed**: Display Box kosong (atau berisi seed yang sama) di world PNB.
 
 ### Setup
 
@@ -78,7 +79,8 @@ Place & Break menaruh blok di tile yang dipilih di sekitar karakter, memukulnya 
 2. Tekan **Atur PNB tiles (5x5)**. Panel kotak 5x5 muncul; kotak tengah **You** adalah posisi karakter. Klik kotak lain untuk memilih tile yang di-place & break. Klik lagi untuk membatalkan. **Clear tiles** menghapus semua pilihan.
 3. Atur **Hit delay**: jeda antar pukulan (0,22–2 detik).
 4. Opsional, stock dari lantai: berdiri di tempat blok stock berserakan, tekan **Set stock position here**, lalu nyalakan **Auto take stock**.
-5. Berdiri di posisi PNB, lalu nyalakan **Place & Break**. Posisi PNB adalah tempat karakter berdiri saat toggle dinyalakan.
+5. Opsional, buang seed: berdiri di samping Display Box, tekan **Set seed drop position here**, atur batas seed, lalu nyalakan **Auto drop seed**.
+6. Berdiri di posisi PNB, lalu nyalakan **Place & Break**. Posisi PNB adalah tempat karakter berdiri saat toggle dinyalakan.
 
 Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpilih.
 
@@ -86,8 +88,9 @@ Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpil
 
 1. Taruh blok di setiap tile terpilih yang kosong, urut dari atas ke bawah, kiri ke kanan. Setiap place dicek ke server: blok di tas harus berkurang satu.
 2. Pukul setiap tile sampai pecah, dengan jeda **Hit delay** di antara pukulan.
-3. Pungut seed, gem, dan blok yang jatuh di sekitar grid (2,75 tile ke samping, 3 ke atas, 2,5 ke bawah). Drop yang ditolak server 3 kali dilewati, PNB tetap lanjut.
-4. Blok di tas habis: dengan **Auto take stock**, jalan ke stock position, lalu datangi tiap tumpukan blok dalam area 6 tile kiri-kanan (3 atas, 2 bawah) sampai tas penuh atau area kosong, lalu kembali. Hasilnya tercatat di diagnostics (`Stock terakhir`). Tanpa itu, PNB berhenti.
+3. Pungut seed, gem, dan blok yang jatuh di sekitar grid (2,75 tile ke samping, 3 ke atas, 2,5 ke bawah). Server cuma terima pungut sejauh sekitar 1 tile, jadi drop di pinggir grid 5x5 didatangi: karakter melangkah ke lantai terdekat, memungut, lalu kembali ke spot. Drop yang tidak terjangkau dilewati, PNB tetap lanjut.
+4. Blok di tas habis: dengan **Auto take stock**, jalan ke stock position, lalu datangi tiap tumpukan blok dalam area 6 tile kiri-kanan (3 atas, 2 bawah) dengan cara yang sama, sampai tas penuh atau area kosong, lalu kembali. Hasilnya tercatat di diagnostics (`Stock terakhir`). Tanpa itu, PNB berhenti.
+5. Seed di tas mencapai batas: dengan **Auto drop seed**, jalan ke Display Box seed, taruh semua seed (`DisplayItem`, cara PNB Claris Growblox), lalu kembali.
 
 | Status | Artinya |
 | --- | --- |
@@ -106,15 +109,9 @@ Toggle **Auto Collect** dan slider **Jangkauan collect (tile)** (0,5 sampai 5, b
 - Server Growblox menolak pungut dari jauh. Kalau item di pinggir jangkauan tidak terambil, kecilkan jangkauan atau berdiri lebih dekat.
 - Diagnostics menampilkan baris `Auto collect: on/off, jangkauan N, terakhir +N item`.
 
-### Auto drop seed dan perekam aksi
+### Kenapa seed ditaruh ke Display Box, bukan di-drop ke lantai
 
-Cara game men-drop item ke lantai belum diketahui, jadi **Auto drop seed belum bisa dipakai**. Untuk menemukannya:
-
-1. Tekan **Rekam aksi drop (30 detik)**.
-2. Dalam 30 detik itu, drop seed **secara manual** sekali.
-3. Tunggu sampai status berubah jadi `Rekaman selesai` (30 detik), baru buka **Settings → Copy diagnostics**. Bagian `Rekaman aksi game` berisi panggilan yang jarang terjadi (aksi manual lo); fungsi yang dipanggil tiap frame cuma diringkas di baris `Sering (diabaikan)`. Perekam juga menyadap semua kiriman ke server (`remote ...:FireServer`); baris `Sadap server` menunjukkan apakah executor mendukungnya.
-
-Kirim hasil itu untuk dibuatkan Auto drop seed. Perekam hanya mencatat; ia tidak mengirim apa pun ke server, dan fungsi asli dipulihkan setelah 30 detik.
+Perintah server untuk drop item ke lantai belum diketahui; Claris Growblox juga tidak punya. PNB Claris Growblox menaruh seed ke Display Box (`DisplayItem`), dan Auto drop seed memakai cara yang sama. Profil lama yang menyimpan seed drop position di lantai otomatis dikosongkan; set ulang di samping Display Box.
 
 ## Planting
 
