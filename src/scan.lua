@@ -15,7 +15,8 @@ return function(G)
 
     -- Kumpulkan tabel kandidat: upvalue fungsi milik world + field tabel konteks (satu tingkat).
     local function candidateTables(r)
-        if r.treeCandidates then return r.treeCandidates end
+        -- cache per world: pindah world bisa membuat tabel pohon baru
+        if r.treeCandidates and r.treeCandidatesWorld == r.world.name then return r.treeCandidates end
         local list, seen = {}, {}
         local function add(value)
             if type(value) == "table" and not seen[value] and value ~= r.world and value ~= r.items and #list < 6000 then
@@ -45,7 +46,7 @@ return function(G)
                 end
             end
         end
-        r.treeCandidates = list
+        r.treeCandidates, r.treeCandidatesWorld = list, r.world.name
         return list
     end
 
@@ -73,7 +74,7 @@ return function(G)
     }
 
     -- Cari tabel pohon memakai beberapa tile seed sebagai bukti. Return accessor + keterangan.
-    function Scan.resolveTrees(r, seedTiles)
+    function Scan.resolveTrees(r, seedTiles, retried)
         if r.treeRipe and r.treeRemaining then
             return { source = "hook game (cara Clarissv)", ripe = r.treeRipe, remaining = r.treeRemaining }
         end
@@ -95,6 +96,10 @@ return function(G)
             end
         end
         if not best then
+            if not retried then
+                r.treeCandidates = nil -- tabel bisa sudah diganti game; kumpulkan ulang sekali
+                return Scan.resolveTrees(r, seedTiles, true)
+            end
             return nil, "tabel pohon tidak ketemu di " .. #candidateTables(r) .. " tabel kandidat"
         end
         local t, layout, field = best.table, best.layout, best.field

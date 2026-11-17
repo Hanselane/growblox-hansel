@@ -115,6 +115,8 @@ return function(G)
         App.stats.broken = App.stats.broken + 1
     end
 
+    Pnb.placeTile, Pnb.breakTile = placeTile, breakTile -- dipakai Rotation
+
     -- Area pungut di sekitar grid 5x5: 2,75 tile ke samping, 3 ke atas, 2,5 ke bawah.
     local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
 

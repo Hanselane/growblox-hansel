@@ -28,7 +28,7 @@ return function(G)
         end
         local resolver, problem = Scan.resolveTrees(r, tiles)
         assert(#tiles == 0 or resolver, "Data pohon tidak terbaca: " .. tostring(problem) .. ". Scan world lalu copy diagnostics.")
-        local work, ripe, growing, longest = {}, 0, 0, 0
+        local work, ripe, growing, longest, soonest = {}, 0, 0, 0, nil
         for _, row in ipairs(Core.farmRows(r.world, r.items)) do
             local points = {}
             local first, last = row.direction == 1 and row.left or row.right, row.direction == 1 and row.right or row.left
@@ -38,18 +38,20 @@ return function(G)
                     if ready then table.insert(points, { x = x, y = row.y }); ripe = ripe + 1
                     elseif ready == false then
                         growing = growing + 1
-                        longest = math.max(longest, resolver.remaining(x, row.y, seedId) or 0)
+                        local left = resolver.remaining(x, row.y, seedId) or 0
+                        longest = math.max(longest, left)
+                        soonest = math.min(soonest or left, left)
                     end
                 end
             end
             if #points > 0 then table.insert(work, { row = row, points = points }) end
         end
-        return { rows = work, ripe = ripe, growing = growing, longest = longest, resolver = resolver }
+        return { rows = work, ripe = ripe, growing = growing, longest = longest, soonest = soonest, resolver = resolver }
     end
 
     -- Simpan blok (dan seed) hasil panen ke Display Box farm. keepSeeds = sisakan seed untuk replant.
-    local function store(blockId, seedId, keepSeeds, token)
-        local box = App.config.points.farmBox
+    local function store(blockId, seedId, keepSeeds, token, box)
+        box = box or App.config.points.farmBox
         refreshInventory(token)
         if count(blockId) > 0 then
             G.setStatus("Menyimpan blok hasil panen ke Display Box farm...")
@@ -119,6 +121,8 @@ return function(G)
             if not ok then App.harvestResumeError = tostring(issue) end
         end
     end
+
+    Harvest.store, Harvest.replant, Harvest.harvestTree, Harvest.duration = store, replant, harvestTree, duration
 
     function Harvest.run(token)
         local box, seedId = App.config.points.farmBox, App.config.harvesting.seedId

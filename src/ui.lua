@@ -49,7 +49,7 @@ return function(G)
         G.Pnb.buildTab(UI.tabs.pnb)
         G.Plant.buildTab(UI.tabs.plant)
         G.Harvest.buildTab(UI.tabs.harvest)
-        UI.tabs.rotation:Paragraph({ Title = "Belum dibuat", Desc = "Fitur ini ditambah di tahap berikutnya." })
+        G.Rotation.buildTab(UI.tabs.rotation)
 
         local s = UI.tabs.settings
         UI.status = UI.addStatus(s:Paragraph({ Title = "Status", Desc = App.status }))

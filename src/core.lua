@@ -33,6 +33,8 @@ function Core.defaults()
         version = Core.CONFIG_VERSION, blockId = 0, points = {}, options = options,
         planting = { seedId = 0, storageWorld = "", worlds = {} },
         harvesting = { method = "fist", seedId = 0, replant = false },
+        -- Rotation: list world farm sendiri (terpisah dari Planting), Display Box per world.
+        rotation = { worlds = {}, seedId = 0, blockTarget = 180, boxes = {} },
         -- PNB: tiles = kotak yang di-place & break, relatif ke posisi berdiri (dx kanan, dy bawah).
         pnb = { tiles = { { dx = 0, dy = -1 } }, autoStock = false, autoDrop = false },
     }
@@ -156,6 +158,37 @@ function Core.validate(input)
     if harvesting.seedId ~= nil then
         assert(integer(harvesting.seedId, 0, 1000000), "Seed panen tidak valid.")
         out.harvesting.seedId = harvesting.seedId
+    end
+    if input.rotation ~= nil then
+        local rot = input.rotation
+        assert(type(rot) == "table", "Bagian rotation di profil rusak.")
+        if rot.worlds ~= nil then
+            assert(type(rot.worlds) == "table", "List world rotasi rusak.")
+            local seen = {}
+            for index, value in ipairs(rot.worlds) do
+                local name = Core.worldName(value)
+                assert(not seen[name], "World rotasi dobel: " .. name)
+                seen[name], out.rotation.worlds[index] = true, name
+            end
+            assert(#out.rotation.worlds <= 50, "Maksimal 50 world rotasi.")
+        end
+        if rot.seedId ~= nil then
+            assert(integer(rot.seedId, 0, 1000000), "Seed rotasi tidak valid.")
+            out.rotation.seedId = rot.seedId
+        end
+        if rot.blockTarget ~= nil then
+            assert(integer(rot.blockTarget, 1, 200), "Target blok rotasi 1-200.")
+            out.rotation.blockTarget = rot.blockTarget
+        end
+        if rot.boxes ~= nil then
+            assert(type(rot.boxes) == "table", "Display Box rotasi rusak.")
+            for name, point in pairs(rot.boxes) do
+                name = Core.worldName(name)
+                assert(type(point) == "table" and integer(point.x, 0, 65535) and integer(point.y, 0, 65535)
+                    and integer(point.standX, 0, 65535) and integer(point.standY, 0, 65535), "Display Box rotasi rusak: " .. name)
+                out.rotation.boxes[name] = { world = name, x = point.x, y = point.y, standX = point.standX, standY = point.standY }
+            end
+        end
     end
     if harvesting.replant ~= nil then
         assert(type(harvesting.replant) == "boolean", "Setting replant tidak valid.")
@@ -321,6 +354,15 @@ end
 
 -- Syarat sebelum task boleh mulai. Mode lain ditambah bareng fiturnya.
 function Core.checkSetup(config, mode, items)
+    if mode == "rotation" then
+        local rot = config.rotation
+        assert(items[rot.seedId] and items[rot.seedId].kind == "seed", "Pilih tanaman rotasi (Scan world dulu).")
+        assert(#rot.worlds > 0, "Isi list world farm rotasi.")
+        for _, name in ipairs(rot.worlds) do
+            assert(rot.boxes[name], "Set Display Box di world " .. name .. " dulu (masuk world itu, berdiri di samping box).")
+        end
+        return true
+    end
     if mode == "harvest" then
         local seedId = config.harvesting.seedId
         assert(items[seedId] and items[seedId].kind == "seed", "Pilih tanaman yang mau dipanen (Scan world dulu).")

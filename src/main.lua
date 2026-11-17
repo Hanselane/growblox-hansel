@@ -104,6 +104,7 @@ return function(modules, VERSION)
     G.Plant = modules.plant(G)
     G.Pnb = modules.pnb(G)
     G.Harvest = modules.harvest(G)
+    G.Rotation = modules.rotation(G)
     App.config = G.Core.defaults()
 
     function G.connect()
@@ -136,6 +137,8 @@ return function(modules, VERSION)
                 .. tostring(App.pnbRejoins or 0) .. "x, Harvest " .. tostring(App.harvestRejoins or 0) .. "x"
                 .. ((App.pnbResumeError or App.harvestResumeError) and ("; checkpoint error: " .. tostring(App.pnbResumeError or App.harvestResumeError)) or ""),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
+            "Rotation: " .. tostring(App.rotationInfo or "-") .. " | world ke-" .. tostring(App.rotationIndex or "-")
+                .. ", putaran " .. tostring(App.rotationLaps or 0) .. ", masuk ulang " .. tostring(App.rotationRejoins or 0) .. "x",
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | seed " .. tostring(App.config.harvesting.seedId)
                 .. ", replant " .. tostring(App.config.harvesting.replant) .. ", box " .. G.Storage.pointText(App.config.points.farmBox),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),

@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.4.1**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.5.0**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -16,6 +16,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Planting](#planting)
 - [World Scan](#world-scan)
 - [Harvest](#harvest)
+- [Rotation](#rotation)
 - [Settings](#settings)
 - [Menyambung ke game](#menyambung-ke-game)
 - [Data yang disimpan](#data-yang-disimpan)
@@ -34,7 +35,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Planting | Planting | Selesai (v0.2.0), dites offline |
 | World Scan | Harvest | v0.3.9, dites offline. Langkah pertama Harvest |
 | Harvest (Fist) + Replant during harvest | Harvest | v0.4.0, dites offline |
-| Rotation | Rotation | Belum |
+| Rotation (harvest → PNB → replant, multi world) | Rotation | v0.5.0, dites offline |
 
 ## Requirements
 
@@ -62,7 +63,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 | **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dan seed lewat Display Box. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | **World Scan** (pohon mateng/tumbuh, floating, blok, isi Display Box) dan **Harvest** pakai Fist dengan Replant during harvest. |
-| **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
+| **Rotation** | List world farm sendiri: harvest sampai target blok, PNB di samping, replant, ulang, pindah world. Jalan terus. |
 | **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, Anti-AFK, Rejoin world and return to PNB & Harvest, jeda dan batas waktu, **Unload script**, dan log aktivitas. |
 
 ## Place & Break
@@ -206,6 +207,33 @@ Panen pakai Fist, diadaptasi dari Claris Growblox v0.1.43. Bedanya: Claris menun
 Dengan **Rejoin world and return to PNB & Harvest** nyala: keluar ke world picker atau avatar mati saat Harvest = masuk lagi ke world farm, scan ulang, lanjut panen (pohon yang sudah dipanen tidak dihitung lagi). Berhenti kalau gagal 3x berturut-turut tanpa ada pohon yang berhasil dipanen di antaranya. Pindah server: script dimuat ulang (butuh `queue_on_teleport`) dan Harvest lanjut dari checkpoint.
 
 Belum ada: panen pakai Dear John Tractor, dan menunggu otomatis sampai pohon berikutnya mateng.
+
+## Rotation
+
+Rotation versi Hansel (bukan Full Rotation Claris). List world-nya **terpisah** dari list world Planting.
+
+### Setup
+
+1. Isi **World farm rotasi (urut)**, pisahkan dengan koma.
+2. Masuk salah satu world farm, tekan **Scan world**, lalu pilih **Tanaman rotasi**.
+3. Masuk **tiap** world di list, berdiri di samping Display Box-nya, tekan **Set Display Box world ini**. Box kosong atau berisi blok/seed tanaman itu saja. Daftar **World rotasi** menunjukkan world yang belum punya box.
+4. Atur **Harvest sampai blok di tas** (bawaan 180).
+5. Nyalakan **Rotation**.
+
+### Cara kerja
+
+Per world, berurutan:
+
+1. Masuk world, scan pohon.
+2. **Harvest** pohon yang mateng (zigzag dari atas, pukul sambil collect) sampai blok di tas mencapai target.
+3. **PNB** di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri), sampai blok habis. Seed dan gem dari PNB dipungut.
+4. **Replant** tile yang barusan dipanen, termasuk tile PNB, pakai seed dari panen dan PNB. Seed habis = tile sisanya dicoba di putaran berikutnya.
+5. Ulangi 1–4 sampai tidak ada pohon mateng di world itu.
+6. Simpan seed sisa (dan blok kalau ada) ke Display Box world itu, lalu lanjut ke world berikutnya.
+
+Setelah world terakhir, balik ke world pertama. Kalau satu putaran penuh tidak ada yang dipanen, Rotation menunggu sampai pohon tercepat mateng (maks 10 menit per tunggu) lalu putar lagi. Di tengah putaran, kalau seed di tas hampir penuh, kelebihannya (di atas 100) disimpan dulu ke box world itu.
+
+Keluar world / avatar mati / pindah server ikut setting **Rejoin world and return to PNB & Harvest**: masuk lagi ke world yang sedang dikerjakan dan lanjut dari scan. Daftar **World rotasi** dan diagnostics (`Rotation:`) menampilkan total dipanen, blok PNB, dan ditanam ulang per world.
 
 ## Settings
 
