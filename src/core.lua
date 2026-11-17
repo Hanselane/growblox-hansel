@@ -5,7 +5,7 @@ local Core = {}
 Core.CONFIG_VERSION = 1
 Core.POINTS = { "pnb", "blockBox", "seedBox", "farmBox", "plantBox", "stock", "seedDrop" }
 -- Titik yang berupa TEMPAT BERDIRI (bukan box), jadi tidak butuh standX/standY.
-Core.STAND_POINTS = { pnb = true, stock = true }
+Core.STAND_POINTS = { pnb = true }
 Core.COLLECT_FILTERS = { "all", "gems", "crop" }
 
 -- Angka yang boleh diatur user: { minimum, maksimum, bawaan }.
@@ -114,8 +114,8 @@ function Core.validate(input)
     assert(type(points) == "table", "Bagian points di profil rusak.")
     for _, key in ipairs(Core.POINTS) do
         local point = points[key]
-        -- seedDrop versi lama (<= 0.3.4) = titik lantai tanpa box; dibuang, set ulang di samping Display Box.
-        if key == "seedDrop" and type(point) == "table" and point.standX == nil then point = nil end
+        -- stock/seedDrop versi lama = titik lantai tanpa box; dibuang, set ulang di samping Display Box.
+        if (key == "seedDrop" or key == "stock") and type(point) == "table" and point.standX == nil then point = nil end
         if point ~= nil then
             assert(type(point) == "table", "Titik tersimpan rusak: " .. key)
             local copy = { world = Core.worldName(point.world) }
@@ -316,7 +316,7 @@ function Core.checkSetup(config, mode, items)
             local point = config.points[key]
             assert(not point or point.world == spot.world, "Posisi " .. key .. " harus di world yang sama dengan PNB.")
         end
-        if config.pnb.autoStock then assert(config.points.stock, "Set stock position dulu, atau matikan Auto take stock.") end
+        if config.pnb.autoStock then assert(config.points.stock, "Set stock position (berdiri di samping Display Box) dulu, atau matikan Auto take stock.") end
         if config.pnb.autoDrop then assert(config.points.seedDrop, "Set seed drop position (berdiri di samping Display Box) dulu, atau matikan Auto drop seed.") end
         return true
     end

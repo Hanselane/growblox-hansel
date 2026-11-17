@@ -127,7 +127,7 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
-            "Stock (3 terakhir):\n  " .. (App.stockHistory and table.concat(App.stockHistory, "\n  ") or "-"),
+            "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
                 .. tostring(App.config and App.config.options.collectRange) .. ", " .. tostring(App.autoCollectInfo or "-"),
             "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,

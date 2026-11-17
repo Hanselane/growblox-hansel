@@ -43,7 +43,23 @@ local function setup(options)
             if drop.uid == uid then drop.n = remaining; if remaining <= 0 then table.remove(drops, i) end; return end
         end
     end
-    world.call = function(method)
+    local boxes = options.boxes or {}
+    for key in pairs(boxes) do
+        local x, y = key:match("(%d+):(%d+)")
+        fg[tonumber(y)][tonumber(x)] = 1422
+    end
+    items[1422].solid = false
+    world.displays = { get = function(x, y) return boxes[x .. ":" .. y] end }
+    world.call = function(method, x, y, id)
+        if method == "DisplayItem" and id == nil and boxes[x .. ":" .. y] then
+            local rows, taken = boxes[x .. ":" .. y], {}
+            while rows[1] do
+                local row = table.remove(rows, 1)
+                server[row[1]] = (server[row[1]] or 0) + row[2]
+                table.insert(taken, { row[1], row[2] })
+            end
+            return true, { taken = taken }
+        end
         if method == "GetInventory" then
             local slots = {}
             for id, n in pairs(server) do if n > 0 then table.insert(slots, { id, n }) end end
@@ -153,40 +169,20 @@ T.test("PNB 2 tile: place, pecahkan, pungut seed, berhenti saat blok habis", fun
     T.eq(sim.App.config.points.pnb.x, 10, "posisi PNB = tempat berdiri"); T.eq(sim.App.config.points.pnb.y, 9)
 end)
 
-T.test("Auto take stock: ambil blok dari lantai lalu lanjut PNB", function()
-    local sim = setup({ blocks = 2, autoStock = true, stock = { world = "PNBW", x = 3, y = 9 },
-        floor = { { id = BLOCK, n = 4, x = 3.5, y = 9.5 }, { id = BLOCK, n = 3, x = 3.7, y = 9.5 } } })
-    sim.G.Jobs.start("pnb")
-    waitJob(sim, 300)
-    sim.S.restore()
-    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
-    T.eq(sim.App.stats.broken, 9, "2 + 7 blok dari stock")
-    T.eq(sim.App.status:find("stock blok di lantai habis", 1, true) ~= nil, true, sim.App.status)
-    T.eq(math.abs(sim.avatar.x - 10.5) < 0.3, true, "balik ke posisi PNB")
-end)
-
-T.test("Auto take stock: stock tersebar, server cuma terima pungut dari dekat", function()
-    local sim = setup({ blocks = 1, autoStock = true, reach = 1.2, stock = { world = "PNBW", x = 3, y = 9 },
-        floor = { { id = BLOCK, n = 3, x = 1.5, y = 9.5 }, { id = BLOCK, n = 2, x = 4.5, y = 9.5 },
-            { id = BLOCK, n = 2, x = 7.5, y = 9.5 }, { id = BLOCK, n = 5, x = 15.5, y = 9.5 } } })
+T.test("Auto take stock: ambil blok dari Display Box lalu lanjut PNB", function()
+    local sim = setup({ blocks = 1, autoStock = true, boxes = { ["3:9"] = { { BLOCK, 5 } } } })
+    sim.App.config.points.stock = { world = "PNBW", x = 3, y = 9, standX = 4, standY = 9 }
     sim.G.Jobs.start("pnb")
     waitJob(sim, 400)
     sim.S.restore()
     T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
-    T.eq(sim.App.stats.broken, 8, "1 + 7 blok dari 3 tumpukan di area stock")
-    T.eq(#sim.drops >= 1 and sim.drops[1].x == 15.5, true, "tumpukan di luar area (x 15) tidak diambil")
+    T.eq(sim.App.stats.broken, 6, "1 blok di tas + 5 dari box")
+    T.eq(sim.App.status, "Selesai: Display Box stock kosong.")
+    T.eq(tostring(sim.App.stockDebug):find("+0 blok dari box 3, 9", 1, true) ~= nil, true, "cek terakhir: box kosong")
 end)
-T.test("Auto take stock: drop yang tidak bisa dipungut lewat server -> sapu lantai, pickup bawaan game", function()
-    local sim = setup({ blocks = 1, autoStock = true, native = true, stock = { world = "PNBW", x = 3, y = 9 },
-        floor = { { id = BLOCK, n = 3, x = 1.5, y = 9.5, display = true }, { id = BLOCK, n = 2, x = 7.5, y = 9.5, display = true } } })
-    sim.G.Jobs.start("pnb")
-    waitJob(sim, 400)
-    sim.S.restore()
-    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
-    T.eq(sim.App.stats.broken, 6, "1 + 5 blok hasil sapu lantai")
-    local history = table.concat(sim.App.stockHistory, "\n")
-    T.eq(history:find("+3 blok (sapu lantai)", 1, true) ~= nil, true, history)
-    T.eq(history:find("display", 1, true) ~= nil, true, "flag drop tercatat: " .. history)
+T.test("Profil lama: stock position di lantai dibuang, set ulang di samping box", function()
+    local out = Core.validate({ blockId = 40, points = { stock = { world = "PNBW", x = 3, y = 9 } } })
+    T.eq(out.points.stock, nil)
 end)
 T.test("Perekam menampilkan panggilan jarang walau ada noise per frame", function()
     local sim = setup()

@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.3.6**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.3.7**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -55,7 +55,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 
 | Tab | Isi |
 | --- | --- |
-| **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dari lantai, seed ke Display Box. |
+| **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dan seed lewat Display Box. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
 | **Harvest** | Panen farm dan simpan hasilnya ke Display Box. Belum dibuat. |
 | **Rotation** | Gabungan semua fitur, berjalan terus. Belum dibuat. |
@@ -70,7 +70,7 @@ Place & Break menaruh blok di tile yang dipilih di sekitar karakter, memukulnya 
 - Blok yang bisa di-PNB ada di tas (blok biasa yang punya hit; bukan background, lock, door, atau display).
 - Izin edit di area PNB.
 - Tile yang dipilih kosong. Tile yang berisi blok lain dilewati, tidak dipukul.
-- Untuk **Auto take stock**: blok stock berserakan di lantai, di world yang sama dengan PNB.
+- Untuk **Auto take stock**: Display Box berisi blok yang di-PNB saja, di world yang sama dengan PNB.
 - Untuk **Auto drop seed**: Display Box kosong (atau berisi seed yang sama) di world PNB.
 
 ### Setup
@@ -78,7 +78,7 @@ Place & Break menaruh blok di tile yang dipilih di sekitar karakter, memukulnya 
 1. Pilih blok di **Block in your backpack**. Tekan **Refresh block** kalau daftar kosong.
 2. Tekan **Atur PNB tiles (5x5)**. Panel kotak 5x5 muncul; kotak tengah **You** adalah posisi karakter. Klik kotak lain untuk memilih tile yang di-place & break. Klik lagi untuk membatalkan. **Clear tiles** menghapus semua pilihan.
 3. Atur **Hit delay**: jeda antar pukulan (0,22–2 detik).
-4. Opsional, stock dari lantai: berdiri di tempat blok stock berserakan, tekan **Set stock position here**, lalu nyalakan **Auto take stock**.
+4. Opsional, stock dari Display Box: berdiri di samping box berisi blok, tekan **Set stock position here**, lalu nyalakan **Auto take stock**.
 5. Opsional, buang seed: berdiri di samping Display Box, tekan **Set seed drop position here**, atur batas seed, lalu nyalakan **Auto drop seed**.
 6. Berdiri di posisi PNB, lalu nyalakan **Place & Break**. Posisi PNB adalah tempat karakter berdiri saat toggle dinyalakan.
 
@@ -89,13 +89,13 @@ Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpil
 1. Taruh blok di setiap tile terpilih yang kosong, urut dari atas ke bawah, kiri ke kanan. Setiap place dicek ke server: blok di tas harus berkurang satu.
 2. Pukul setiap tile sampai pecah, dengan jeda **Hit delay** di antara pukulan.
 3. Pungut seed, gem, dan blok yang jatuh di sekitar grid (2,75 tile ke samping, 3 ke atas, 2,5 ke bawah). Server cuma terima pungut sejauh sekitar 1 tile, jadi drop di pinggir grid 5x5 didatangi: karakter melangkah ke lantai terdekat, memungut, lalu kembali ke spot. Drop yang tidak terjangkau dilewati, PNB tetap lanjut.
-4. Blok di tas habis: dengan **Auto take stock**, jalan ke stock position, lalu datangi tiap tumpukan blok dalam area 6 tile kiri-kanan (3 atas, 2 bawah) dengan cara yang sama, sampai tas penuh atau area kosong. Kalau tetap tidak dapat blok, karakter menyapu lantai area stock (ujung kiri ke ujung kanan) dengan pickup bawaan game aktif, seperti kalau lo jalan manual melewati item. Diagnostics `Stock (3 terakhir)` mencatat hasil, cara yang berhasil, dan isi lantai (id, jumlah, posisi, flag tiap drop). Tanpa itu, PNB berhenti.
+4. Blok di tas habis: dengan **Auto take stock**, jalan ke Display Box stock, ambil blok (`DisplayItem`, cara PNB Claris Growblox: "Refilling blocks from the right storage box"), lalu kembali. Hasilnya di diagnostics (`Stock terakhir`). Tanpa itu, PNB berhenti.
 5. Seed di tas mencapai batas: dengan **Auto drop seed**, jalan ke Display Box seed, taruh semua seed (`DisplayItem`, cara PNB Claris Growblox), lalu kembali.
 
 | Status | Artinya |
 | --- | --- |
 | `Selesai: blok di tas habis.` | Blok habis dan Auto take stock mati |
-| `Selesai: stock blok di lantai habis.` | Tidak ada blok lagi di stock position |
+| `Selesai: Display Box stock kosong.` | Box stock sudah tidak berisi blok |
 | `Semua tile PNB terhalang blok lain.` | Semua tile terpilih berisi blok lain; kosongkan atau pilih tile lain |
 | `Karakter bergeser; kembali ke posisi PNB...` | Karakter terdorong saat place/break; script jalan balik ke spot dan lanjut |
 | `Karakter terus bergeser dari posisi PNB` | Terdorong lebih dari 10 kali dalam 1 menit; PNB berhenti |

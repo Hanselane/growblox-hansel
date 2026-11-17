@@ -1,5 +1,5 @@
--- Growblox Hansel v0.3.6. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.3.6"
+-- Growblox Hansel v0.3.7. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.3.7"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -11,7 +11,7 @@ local Core = {}
 Core.CONFIG_VERSION = 1
 Core.POINTS = { "pnb", "blockBox", "seedBox", "farmBox", "plantBox", "stock", "seedDrop" }
 -- Titik yang berupa TEMPAT BERDIRI (bukan box), jadi tidak butuh standX/standY.
-Core.STAND_POINTS = { pnb = true, stock = true }
+Core.STAND_POINTS = { pnb = true }
 Core.COLLECT_FILTERS = { "all", "gems", "crop" }
 
 -- Angka yang boleh diatur user: { minimum, maksimum, bawaan }.
@@ -120,8 +120,8 @@ function Core.validate(input)
     assert(type(points) == "table", "Bagian points di profil rusak.")
     for _, key in ipairs(Core.POINTS) do
         local point = points[key]
-        -- seedDrop versi lama (<= 0.3.4) = titik lantai tanpa box; dibuang, set ulang di samping Display Box.
-        if key == "seedDrop" and type(point) == "table" and point.standX == nil then point = nil end
+        -- stock/seedDrop versi lama = titik lantai tanpa box; dibuang, set ulang di samping Display Box.
+        if (key == "seedDrop" or key == "stock") and type(point) == "table" and point.standX == nil then point = nil end
         if point ~= nil then
             assert(type(point) == "table", "Titik tersimpan rusak: " .. key)
             local copy = { world = Core.worldName(point.world) }
@@ -322,7 +322,7 @@ function Core.checkSetup(config, mode, items)
             local point = config.points[key]
             assert(not point or point.world == spot.world, "Posisi " .. key .. " harus di world yang sama dengan PNB.")
         end
-        if config.pnb.autoStock then assert(config.points.stock, "Set stock position dulu, atau matikan Auto take stock.") end
+        if config.pnb.autoStock then assert(config.points.stock, "Set stock position (berdiri di samping Display Box) dulu, atau matikan Auto take stock.") end
         if config.pnb.autoDrop then assert(config.points.seedDrop, "Set seed drop position (berdiri di samping Display Box) dulu, atau matikan Auto drop seed.") end
         return true
     end
@@ -3052,7 +3052,7 @@ end)()
 
 -- ===== src/pnb.lua =====
 __modules["pnb"] = (function(...)
--- pnb.lua: Place & Break dengan grid 5x5 (layout terinspirasi Crusader), stock dari lantai,
+-- pnb.lua: Place & Break dengan grid 5x5 (layout terinspirasi Crusader), stock & seed lewat Display Box,
 -- dan perekam aksi game untuk menemukan cara drop seed.
 -- placeTile/breakTile/settleTile diadaptasi dari Clarissv main.lua v0.1.43; bedanya grid bisa
 -- sampai 24 tile di sekitar karakter, dan tile yang terisi blok lain dilewati, bukan error.
@@ -3173,72 +3173,16 @@ return function(G)
     local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
 
     ---------------------------------------------------------------- stock & seed
-    -- Ambil stock dari lantai: ke stock position, lalu datangi tiap tumpukan blok di area stock
-    -- (6 tile kiri-kanan, 3 atas, 2 bawah). Server cuma terima pungut dari jarak ~1 tile, jadi
-    -- karakter berdiri di lantai terdekat tiap tumpukan (Drops.collectArea, cara panen Clarissv).
-    -- Return: jumlah blok yang bertambah di tas (termasuk yang terpungut otomatis saat lewat).
-    local STOCK_AREA = { radius = 6, up = 3, down = 2 }
-
-    -- Isi lantai di sekitar stock untuk diagnostics: berapa drop, id apa, flag apa.
-    -- Dipakai kalau stock gagal, supaya kelihatan KENAPA drop tidak dianggap stock.
-    function Pnb.describeDrops(point, area, blockId)
-        local r = Bridge.runtime()
-        local total, same, samples = 0, 0, {}
-        for _, drop in pairs(r.world.dropList()) do
-            if type(drop) == "table" and type(drop.x) == "number" and type(drop.y) == "number"
-                and math.abs(drop.x - (point.x + 0.5)) <= area.radius + 2
-                and drop.y >= point.y - area.up - 2 and drop.y <= point.y + area.down + 2 then
-                total = total + 1
-                if drop.id == blockId then same = same + 1 end
-                if #samples < 5 then
-                    local flags = (drop.display and " display" or "") .. (drop.pending and " pending" or "")
-                        .. (drop.taking and " taking" or "") .. (drop.inBlock and " inBlock" or "")
-                    table.insert(samples, string.format("id %s n %s di %.2f,%.2f%s", tostring(drop.id),
-                        tostring(drop.n), drop.x, drop.y, flags))
-                end
-            end
-        end
-        local okRoom, room = pcall(function() return r.inventory:room(blockId) end)
-        return string.format("lantai: %d drop, %d id blok %s, muat di tas %s, stock tile %d,%d. %s", total, same,
-            tostring(blockId), okRoom and tostring(room) or "?", point.x, point.y, table.concat(samples, " | "))
-    end
-
-    -- Ambil stock dari lantai:
-    -- 1) ke stock position, datangi tiap tumpukan blok di area stock (6 tile kiri-kanan, 3 atas,
-    --    2 bawah) dan pungut lewat server (Drops.collectArea, cara panen Clarissv);
-    -- 2) kalau tetap tidak dapat, sapu lantai area stock (jalan ujung kiri -> ujung kanan) dengan
-    --    pickup bawaan game aktif, seperti kalau lo jalan manual melewati item.
-    -- Return: jumlah blok yang bertambah di tas.
+    -- Ambil stock dari Display Box (sama seperti PNB Clarissv: "Refilling blocks from the right
+    -- storage box", world.call("DisplayItem", x, y, nil)). Box berisi blok yang di-PNB saja.
+    -- Return: jumlah blok yang diambil (0 = box kosong).
     function Pnb.takeStock(anchor, blockId, token)
-        local stock, r = App.config.points.stock, Bridge.runtime()
-        G.setStatus("Mengambil stock blok dari lantai...")
-        -- Hitung SEBELUM jalan: blok yang terpungut otomatis di perjalanan juga dihitung.
-        local before = refreshInventory(token)[blockId] or 0
-        local floor = Pnb.describeDrops(stock, STOCK_AREA, blockId)
-        Movement.moveTo(stock.x, stock.y, stock.world, token)
-        local _, skipped = Drops.collectArea(stock, { blockId }, token, STOCK_AREA, {
-            onTrip = function() G.setStatus("Mengambil stock: jalan ke tumpukan blok...") end })
-        local gained = (refreshInventory(token)[blockId] or 0) - before
-        local method = "pungut"
-        if gained == 0 then
-            method = "sapu lantai"
-            G.setStatus("Mengambil stock: menyapu lantai area stock...")
-            local hold = Movement.takeControls()
-            hold.pausePickup = false
-            for _, x in ipairs({ stock.x - STOCK_AREA.radius, stock.x + STOCK_AREA.radius, stock.x }) do
-                x = math.max(0, math.min(r.world.w - 1, x))
-                local ok, problem = pcall(Movement.moveTo, x, stock.y, stock.world, token)
-                if not ok and (type(problem) == "table" or tostring(problem):find("Stopped", 1, true)) then error(problem, 0) end
-            end
-            pause(0.5, token) -- tunggu balasan pickup bawaan game
-            gained = (refreshInventory(token)[blockId] or 0) - before
-        end
-        App.stockDebug = "+" .. gained .. " blok (" .. method .. "), " .. skipped .. " tumpukan tidak terjangkau; " .. floor
-        App.stockHistory = App.stockHistory or {}
-        table.insert(App.stockHistory, 1, os.date("%H:%M:%S") .. " " .. App.stockDebug)
-        App.stockHistory[4] = nil
+        local box = App.config.points.stock
+        G.setStatus("Mengambil stock blok dari Display Box...")
+        local taken = G.Storage.withdraw(box, blockId, token)
+        App.stockDebug = os.date("%H:%M:%S") .. " +" .. taken .. " blok dari box " .. box.x .. ", " .. box.y
         ensureAnchor(anchor, token)
-        return gained
+        return taken
     end
 
     -- Auto drop seed = taruh seed ke Display Box (sama seperti PNB Clarissv: "Putting seeds into
@@ -3335,8 +3279,8 @@ return function(G)
                 if count(blockId) == 0 then
                     if App.config.pnb.autoStock then Pnb.takeStock(anchor, blockId, token) end
                     if not (App.config.pnb.autoStock and (refreshInventory(token)[blockId] or 0) > 0) then
-                        G.setStatus(App.config.pnb.autoStock and "Selesai: stock blok di lantai habis."
-                            or "Selesai: blok di tas habis. Nyalakan Auto take stock untuk ambil dari lantai.")
+                        G.setStatus(App.config.pnb.autoStock and "Selesai: Display Box stock kosong."
+                            or "Selesai: blok di tas habis. Nyalakan Auto take stock untuk ambil dari Display Box.")
                         return
                     end
                 end
@@ -3591,8 +3535,7 @@ return function(G)
         end
         function Pnb.refreshTab()
             UI.paragraph(controls.grid, "PNB tiles", Pnb.gridText())
-            UI.paragraph(controls.stock, "Stock position", App.config.points.stock
-                and (App.config.points.stock.world .. "  |  tile " .. App.config.points.stock.x .. ", " .. App.config.points.stock.y) or "Belum diset")
+            UI.paragraph(controls.stock, "Stock (Display Box)", G.Storage.pointText(App.config.points.stock))
             UI.paragraph(controls.drop, "Seed drop (Display Box)", G.Storage.pointText(App.config.points.seedDrop))
         end
         local function setOption(fn)
@@ -3624,15 +3567,15 @@ return function(G)
             Callback = function(value) setOption(function() App.config.options.collectRange = tonumber(value) end) end })
 
         pcall(function() tab:Section({ Title = "Stock" }) end)
-        controls.stock = tab:Paragraph({ Title = "Stock position", Desc = "Belum diset" })
-        tab:Button({ Title = "Set stock position here", Desc = "Berdiri di tempat blok stock berserakan di lantai.",
+        controls.stock = tab:Paragraph({ Title = "Stock (Display Box)", Desc = "Belum diset" })
+        tab:Button({ Title = "Set stock position here", Desc = "Berdiri di samping Display Box berisi blok yang di-PNB.",
             Callback = UI.action(function()
-                App.config.points.stock = Pnb.standingTile()
+                local box = G.Storage.captureNearby("stock", "box")
                 Pnb.refreshTab()
-                G.setStatus("Stock position disimpan.")
+                G.setStatus("Display Box stock disimpan: tile " .. box.x .. ", " .. box.y .. ".")
             end) })
         controls.autoStock = tab:Toggle({ Title = "Auto take stock", Value = App.config.pnb.autoStock,
-            Desc = "Blok di tas habis: jalan ke stock position, pungut blok di lantai, lalu lanjut PNB.",
+            Desc = "Blok di tas habis: jalan ke Display Box stock, ambil blok, lalu lanjut PNB.",
             Callback = function(enabled) setOption(function() App.config.pnb.autoStock = enabled == true end) end })
 
         controls.drop = tab:Paragraph({ Title = "Seed drop (Display Box)", Desc = "Belum diset" })
@@ -3803,7 +3746,7 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
-            "Stock (3 terakhir):\n  " .. (App.stockHistory and table.concat(App.stockHistory, "\n  ") or "-"),
+            "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
                 .. tostring(App.config and App.config.options.collectRange) .. ", " .. tostring(App.autoCollectInfo or "-"),
             "Seed ditanam sesi ini: " .. App.stats.planted .. " | Blok dipecah: " .. App.stats.broken,
