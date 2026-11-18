@@ -252,19 +252,5 @@ return function(G)
         return lines
     end
 
-    -- onScan dipanggil setelah scan berhasil (dipakai tab Harvest untuk mengisi pilihan tanaman).
-    function Scan.buildTab(tab, onScan)
-        local UI = G.UI
-        tab:Paragraph({ Title = "World Scan", Desc = "Scan world yang sedang lo masuki: pohon (mateng/tumbuh), item floating, blok, dan isi Display Box. Dibaca dari memori game, tanpa request ke server." })
-        local result = tab:Paragraph({ Title = "Hasil scan", Desc = "Belum di-scan." })
-        tab:Button({ Title = "Scan world", Callback = function()
-            local ok, lines = pcall(Scan.run)
-            local text = ok and table.concat(lines, "\n") or ("Scan gagal: " .. tostring(lines))
-            UI.paragraph(result, "Hasil scan", text)
-            G.setStatus(ok and "World Scan selesai." or text)
-            if ok and onScan then pcall(onScan) end
-        end })
-    end
-
     return Scan
 end

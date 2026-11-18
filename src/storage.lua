@@ -192,6 +192,56 @@ return function(G)
         return taken
     end
 
+    ---------------------------------------------------------------- deteksi box otomatis
+    -- Cari Display Box di world sekarang yang boleh dipakai untuk menyimpan `allowed` (daftar id):
+    -- isinya kosong atau hanya item `allowed`. Box yang sudah berisi item itu didahulukan, lalu box
+    -- kosong; kalau seri, yang paling dekat karakter. Posisi berdiri = tile di samping box (kiri,
+    -- kanan, di box itu sendiri, 2 tile kiri/kanan) yang bisa dipijak. Return: point box.
+    function Storage.findBox(allowed)
+        local r, state = Bridge.runtime(), position()
+        local map = Movement.navigationMap(r)
+        local ok = {}
+        for _, id in ipairs(allowed) do ok[id] = true end
+        local function standable(x, y)
+            if x < 0 or x >= r.world.w or y < 0 or y + 1 >= r.world.h then return false end
+            return not map.solid(x, y) and (map.solid(x, y + 1) or map.platform(x, y + 1)) and true or false
+        end
+        local best, bestRank
+        local seen, skipped = 0, 0
+        for y = 0, r.world.h - 1 do
+            local row = r.world.fg[y]
+            for x = 0, r.world.w - 1 do
+                local item = row and r.items[row[x] or 0]
+                if item and item.display and not item.displayOne then
+                    seen = seen + 1
+                    local rows = r.world.displays.get(x, y) or {}
+                    local usable, used = true, false
+                    for _, entry in pairs(rows) do
+                        if type(entry) == "table" then
+                            if ok[entry[1]] then used = true else usable = false end
+                        end
+                    end
+                    local stand
+                    for _, dx in ipairs({ -1, 1, 0, -2, 2 }) do
+                        if standable(x + dx, y) then stand = { x = x + dx, y = y }; break end
+                    end
+                    if usable and stand then
+                        local distance = math.abs(x + 0.5 - state.x) + math.abs(y + 1 - state.y)
+                        local rank = (used and 0 or 100000) + distance
+                        if not bestRank or rank < bestRank then
+                            best, bestRank = { world = r.world.name, x = x, y = y, standX = stand.x, standY = stand.y }, rank
+                        end
+                    else
+                        skipped = skipped + 1
+                    end
+                end
+            end
+        end
+        assert(best, string.format("Tidak ada Display Box yang bisa dipakai di %s (%d box, %d berisi item lain / tidak bisa didekati). "
+            .. "Taruh 1 Display Box kosong di world ini.", r.world.name, seen, skipped))
+        return best
+    end
+
     ---------------------------------------------------------------- simpan posisi box
     function Storage.pointText(point)
         if not point then return "Belum disimpan" end

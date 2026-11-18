@@ -26,6 +26,8 @@ return function(G)
             local want = math.floor(math.min(drop.n, room, 65535))
             if want > 0 and present and eligible(drop) then
                 local before, grid, uid, id = drop.n, r.world.fg, drop.uid, drop.id
+                local here = position()
+                local distance = math.max(math.abs(drop.x - here.x), math.abs(drop.y - (here.y - 0.5)))
                 if id ~= Drops.GEM then reserved[id] = (reserved[id] or 0) + want end
                 attempts[uid] = (attempts[uid] or 0) + 1
                 if App.controls then App.controls.suppressedTakes[uid] = nil end
@@ -36,6 +38,7 @@ return function(G)
                         if amount == nil then amount = 0 end
                         assert(type(amount) == "number" and amount >= 0 and amount <= want
                             and amount == math.floor(amount), "Invalid pickup response from the server.")
+                        Drops.noteReach(distance, amount > 0)
                         if amount > 0 and r.world.name == worldName and r.world.fg == grid then
                             r.world.dropTaken(uid, math.min(drop.n, math.max(0, before - amount)))
                             if id == Drops.GEM then App.stats.gems = App.stats.gems + amount end
@@ -95,7 +98,7 @@ return function(G)
                         local room = drop.id == Drops.GEM and 65535 or r.inventory:room(drop.id)
                         if room > 0 then
                             retryAt[drop.uid] = retryAt[drop.uid] or ((drop.refused or -math.huge) + 1)
-                            if (attempts[drop.uid] or 0) >= 3 then skipped = skipped + 1
+                            if (attempts[drop.uid] or 0) >= (options.maxAttempts or 3) then skipped = skipped + 1
                             elseif math.max(drop.readyAt or 0, retryAt[drop.uid]) > os.clock() then waiting = true
                             else table.insert(targets, drop) end
                         end
@@ -126,9 +129,33 @@ return function(G)
         end)
     end
 
-    -- Jangkauan pungut server Growblox (dari Clarissv collectDrops): 1.25 tile ke samping,
-    -- 1.5 ke atas, 1.25 ke bawah dari tile tempat berdiri. Lebih jauh dari itu ditolak server.
+    -- Ukur jangkauan pungut server: tiap pungut (dari posisi berdiri, tanpa jalan) dicatat jaraknya
+    -- (tile, ambil yang terbesar dari jarak samping / atas-bawah) dan diterima atau ditolak.
+    -- Hasilnya muncul di diagnostics, dan jarak terjauh yang pernah diterima dipakai sebagai
+    -- jangkauan pungut berikutnya (Drops.reach), jadi karakter tidak jalan kalau tidak perlu.
+    App.reach = App.reach or { ok = 0, no = 0, okMax = 0, noMin = math.huge }
+    function Drops.noteReach(distance, accepted)
+        local stat = App.reach
+        if accepted then
+            stat.ok, stat.okMax = stat.ok + 1, math.max(stat.okMax, distance)
+        else
+            stat.no, stat.noMin = stat.no + 1, math.min(stat.noMin, distance)
+        end
+    end
+    function Drops.reachText()
+        local stat = App.reach
+        return string.format("diterima %dx (terjauh %.2f tile), ditolak %dx (terdekat %s); dipakai %.2f tile",
+            stat.ok, stat.okMax, stat.no, stat.noMin == math.huge and "-" or string.format("%.2f tile", stat.noMin), Drops.reach().radius)
+    end
+
+    -- Jangkauan pungut server Growblox: bawaan dari Clarissv collectDrops (1.25 tile ke samping,
+    -- 1.5 ke atas, 1.25 ke bawah). Kalau server terbukti menerima lebih jauh, pakai jarak itu (maks 5).
     Drops.REACH = { radius = 1.25, up = 1.5, down = 1.25 }
+    function Drops.reach()
+        local learned = math.min(5, App.reach.okMax)
+        if learned <= Drops.REACH.radius then return Drops.REACH end
+        return { radius = learned, up = math.max(1.5, learned), down = math.max(1.25, learned) }
+    end
 
     -- Pungut semua drop `ids` di dalam `area` sekitar `anchor`. Yang di luar jangkauan server
     -- didatangi: cari lantai terdekat yang bisa dipakai memungut (Navigation.pickupGoal, sama
@@ -156,8 +183,12 @@ return function(G)
         -- 1) yang sudah terjangkau dari posisi sekarang
         local here = position()
         local stand = { world = anchor.world, x = math.floor(here.x), y = math.floor(here.y - 0.01) }
-        add(Drops.collectNear(stand, ids, token, { radius = Drops.REACH.radius, up = Drops.REACH.up,
-            down = Drops.REACH.down, attempts = attempts }))
+        -- Selama server belum pernah menolak, coba SELURUH area sekali dari tempat berdiri (tanpa
+        -- jalan) untuk mengukur jangkauan server. Setelah ada penolakan, cuma yang terbukti terjangkau.
+        local reach, probing = Drops.reach(), App.reach.no == 0
+        local near = probing and { radius = area.radius + math.abs(stand.x - anchor.x), up = area.up + 1, down = area.down + 1 } or reach
+        add(Drops.collectNear(stand, ids, token, { radius = near.radius, up = near.up,
+            down = near.down, attempts = attempts, maxAttempts = probing and 1 or 3 }))
         -- 2) datangi sisanya satu per satu, terdekat dulu
         for _ = 1, options.maxTrips or 40 do
             checkpoint(token)

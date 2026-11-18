@@ -115,12 +115,8 @@ local function setup(options)
         G[pair[2]] = module(pair[1])(G)
     end
     App.config = Core.defaults()
-    App.config.rotation.seedId = SEED
     App.config.rotation.blockTarget = options.target or 6
     App.config.rotation.worlds = options.worlds or { "FARM" }
-    for _, name in ipairs(App.config.rotation.worlds) do
-        App.config.rotation.boxes[name] = { world = name, x = 16, y = 8, standX = 15, standY = 8 }
-    end
     G.Bridge.connect({ attempts = 1 })
     local r = App.runtime
     r.handlers.canPlace = function(item, x, y) return world.fg[y][x] == 0 end
@@ -279,11 +275,17 @@ T.test("Resume rotation: lanjut dari world tersimpan", function()
     T.eq(world, "FARM2", "langsung ke world ke-2")
     T.eq(sim.grids.FARM.fg[8][2], SEED, "FARM belum disentuh (pohon mateng masih ada)")
 end)
-T.test("Rotation: world tanpa Display Box -> pesan setup jelas", function()
+T.test("Rotation: world tanpa Display Box yang bisa dipakai -> dilewati dengan alasan, world lain jalan", function()
     local sim = setup({ worlds = { "FARM", "FARM2" } })
-    sim.App.config.rotation.boxes.FARM2 = nil
-    T.errors(function() sim.G.Jobs.start("rotation") end, "FARM2")
+    sim.grids.FARM.box[1] = { 2, 5 } -- box FARM berisi item lain (dirt)
+    sim.G.Jobs.start("rotation")
+    runUntil(sim, function() return sim.App.rotationWorlds and sim.App.rotationWorlds.FARM2 ~= nil end, 1500)
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
     sim.S.restore()
+    T.eq(tostring(sim.App.rotationWorlds.FARM):find("Tidak ada Display Box", 1, true) ~= nil, true, tostring(sim.App.rotationWorlds.FARM))
+    T.eq(tostring(sim.App.rotationWorlds.FARM2):find("total dipanen 3", 1, true) ~= nil, true, tostring(sim.App.rotationWorlds.FARM2))
+    T.eq(sim.grids.FARM.fg[8][2], SEED, "FARM tidak disentuh")
 end)
 T.test("Profil: rotation tersimpan & tervalidasi", function()
     local out = Core.validate({ rotation = { worlds = { "farm1", "farm2" }, seedId = 41, blockTarget = 180,

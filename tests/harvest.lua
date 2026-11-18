@@ -53,11 +53,12 @@ local function setup(options)
             for itemId, n in pairs(server) do if n > 0 then table.insert(slots, { itemId, n }) end end
             return { slots = slots, capacity = 16 }
         elseif method == "DisplayItem" and id ~= nil then
-            assert(x == 16 and y == 8 and amount > 0 and amount <= (server[id] or 0), "deposit tidak valid")
+            local rows = world.displays.get(x, y)
+            assert(rows and amount > 0 and amount <= (server[id] or 0), "deposit tidak valid")
             server[id] = server[id] - amount
             local found = false
-            for _, row in ipairs(boxRows) do if row[1] == id then row[2] = row[2] + amount; found = true end end
-            if not found then table.insert(boxRows, { id, amount }) end
+            for _, row in ipairs(rows) do if row[1] == id then row[2] = row[2] + amount; found = true end end
+            if not found then table.insert(rows, { id, amount }) end
             return true, {}
         end
     end
@@ -88,9 +89,8 @@ local function setup(options)
         G[pair[2]] = module(pair[1])(G)
     end
     App.config = Core.defaults()
-    App.config.harvesting.seedId = SEED
+    App.config.harvesting.worlds = options.worlds or { "FARM" }
     App.config.harvesting.replant = options.replant or false
-    App.config.points.farmBox = { world = "FARM", x = 16, y = 8, standX = 15, standY = 8 }
     G.Bridge.connect({ attempts = 1 })
     local r = App.runtime
     r.handlers.canPlace = function(item, x, y) return world.fg[y][x] == 0 end
@@ -124,7 +124,7 @@ local function setup(options)
             S.task.wait(dt)
         end
     end)
-    return { G = G, S = S, App = App, world = world, server = server, drops = drops, boxRows = boxRows, avatar = avatar }
+    return { G = G, S = S, App = App, world = world, server = server, drops = drops, boxRows = boxRows, avatar = avatar, treeTable = trees }
 end
 local function waitJob(sim, seconds)
     local stop = sim.S.now + seconds
@@ -147,8 +147,10 @@ T.test("Harvest: cuma pohon mateng yang dipanen, yang tumbuh dibiarkan, hasil ma
     T.eq(boxCount(sim, BLOCK), 18, "6 pohon x 3 blok di box")
     T.eq(boxCount(sim, SEED), 6, "seed hasil panen di box")
     T.eq(#sim.drops, 0, "tidak ada drop tertinggal")
-    T.eq(sim.App.status:find("Selesai: 6 pohon dipanen", 1, true) ~= nil, true, sim.App.status)
-    T.eq(sim.App.status:find("3 pohon masih tumbuh", 1, true) ~= nil, true, sim.App.status)
+    T.eq(sim.App.status:find("Selesai: 6 pohon dipanen di 1 world", 1, true) ~= nil, true, sim.App.status)
+    local report = tostring(sim.App.harvestWorlds.FARM)
+    T.eq(report:find("dipanen 6", 1, true) ~= nil and report:find("3 tumbuh", 1, true) ~= nil, true, report)
+    T.eq(report:find("box 16,8", 1, true) ~= nil, true, "box dideteksi otomatis: " .. report)
 end)
 T.test("Harvest + Replant: tile yang dipanen langsung ditanam lagi pakai seed hasil panen", function()
     local sim = setup({ replant = true })
@@ -159,7 +161,7 @@ T.test("Harvest + Replant: tile yang dipanen langsung ditanam lagi pakai seed ha
     local replanted = 0
     for _, x in ipairs({ 2, 3, 5, 6, 8, 9 }) do if sim.world.fg[8][x] == SEED then replanted = replanted + 1 end end
     T.eq(replanted >= 5, true, "minimal 5 dari 6 tile ditanam ulang: " .. replanted)
-    T.eq(sim.App.status:find("ditanam ulang", 1, true) ~= nil, true, sim.App.status)
+    T.eq(tostring(sim.App.harvestWorlds.FARM):find("ditanam ulang", 1, true) ~= nil, true, tostring(sim.App.harvestWorlds.FARM))
     T.eq(boxCount(sim, BLOCK), 18)
 end)
 T.test("Harvest: belum ada yang mateng -> selesai dengan sisa waktu, tidak memukul apa pun", function()
@@ -168,16 +170,13 @@ T.test("Harvest: belum ada yang mateng -> selesai dengan sisa waktu, tidak memuk
     waitJob(sim, 60)
     sim.S.restore()
     T.eq(sim.App.lastError, nil, tostring(sim.App.lastError))
-    T.eq(sim.App.status:find("Belum ada pohon mateng", 1, true) ~= nil, true, sim.App.status)
+    T.eq(tostring(sim.App.harvestWorlds.FARM):find("belum ada yang mateng", 1, true) ~= nil, true, tostring(sim.App.harvestWorlds.FARM))
     T.eq(sim.world.fg[8][3], SEED)
 end)
-T.test("Harvest: tanpa tanaman / box farm -> pesan setup jelas", function()
+T.test("Harvest: list world kosong -> pesan setup jelas", function()
     local sim = setup()
-    sim.App.config.harvesting.seedId = 0
-    T.errors(function() sim.G.Jobs.start("harvest") end, "Scan world")
-    sim.App.config.harvesting.seedId = SEED
-    sim.App.config.points.farmBox = nil
-    T.errors(function() sim.G.Jobs.start("harvest") end, "Display Box farm")
+    sim.App.config.harvesting.worlds = {}
+    T.errors(function() sim.G.Jobs.start("harvest") end, "list world harvest")
     sim.S.restore()
 end)
 T.test("Keluar world saat Harvest -> masuk lagi ke world farm, scan ulang, lanjut sampai selesai", function()
@@ -195,7 +194,7 @@ T.test("Keluar world saat Harvest -> masuk lagi ke world farm, scan ulang, lanju
     sim.S.restore()
     T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
     T.eq(entered, 1, "masuk lagi sekali")
-    T.eq(sim.App.harvestRejoins, 1)
+    T.eq(sim.App.rejoins.Harvest, 1)
     for _, x in ipairs({ 2, 3, 5, 6, 8, 9 }) do T.eq(sim.world.fg[8][x], 0, "pohon mateng x " .. x .. " dipanen") end
     T.eq(boxCount(sim, BLOCK), 18, "semua hasil tetap masuk box")
 end)
@@ -215,7 +214,7 @@ T.test("Resume setelah pindah server: checkpoint Harvest -> masuk world farm dan
     local sim = setup()
     local config = Core.validate(sim.App.config)
     sim.G.State.loadCheckpoint = function(name)
-        if name == "harvest" then return { config = config, profile = "Default", data = { world = "FARM" } } end
+        if name == "harvest" then return { config = config, profile = "Default", data = { worldIndex = 1 } } end
     end
     sim.world.name = "LOBBY"
     sim.world.enter = function(name) sim.world.name, sim.avatar.x, sim.avatar.vx = name, 14.5, 0; return true end
@@ -224,6 +223,34 @@ T.test("Resume setelah pindah server: checkpoint Harvest -> masuk world farm dan
     sim.S.restore()
     T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
     T.eq(boxCount(sim, BLOCK), 18)
+end)
+T.test("Harvest 2 world: tiap world tanaman & box dideteksi sendiri", function()
+    local sim = setup({ worlds = { "FARM", "FARM2" } })
+    -- FARM2: 3 pohon mateng, box di tile 2,8 yang sudah berisi seed; ada box lain berisi item asing
+    local fg2 = {}
+    for y = 0, 9 do fg2[y] = {}; for x = 0, 17 do fg2[y][x] = 0 end end
+    for x = 0, 17 do fg2[9][x] = DIRT end
+    fg2[8][2], fg2[8][12] = BOX, BOX
+    local boxes2 = { ["2:8"] = { { SEED, 5 } }, ["12:8"] = { { 2, 9 } } }
+    local trees2 = {}
+    for _, x in ipairs({ 5, 6, 7 }) do fg2[8][x] = SEED; trees2[8 * 18 + x] = { p = 1 } end
+    sim.world.enter = function(name)
+        if name == "FARM2" then
+            sim.world.fg = fg2
+            sim.world.displays.get = function(x, y) return boxes2[x .. ":" .. y] end
+            for k in pairs(sim.treeTable) do sim.treeTable[k] = nil end
+            for k, v in pairs(trees2) do sim.treeTable[k] = v end -- tabel pohon yang sama diisi ulang
+        end
+        sim.world.name, sim.avatar.x, sim.avatar.vx = name, 14.5, 0
+        return true
+    end
+    sim.G.Jobs.start("harvest")
+    waitJob(sim, 600)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(tostring(sim.App.harvestWorlds.FARM2):find("dipanen 3", 1, true) ~= nil, true, tostring(sim.App.harvestWorlds.FARM2))
+    T.eq(tostring(sim.App.harvestWorlds.FARM2):find("box 2,8", 1, true) ~= nil, true, "box berisi seed dipilih, box asing dilewati")
+    T.eq(boxes2["12:8"][1][2], 9, "box berisi item lain tidak disentuh")
 end)
 T.test("blockForSeed: seed 41 -> blok 40", function()
     local fake = T.fakeGame()

@@ -20,18 +20,9 @@ return function(G)
     local SEED_KEEP = 100 -- seed yang disisakan di tas saat simpan di tengah putaran (buat replant)
 
     ---------------------------------------------------------------- checkpoint / resume
-    local lastSave = -math.huge
-    function Rotation.saveResume()
-        State.saveCheckpoint("rotation", { worldIndex = App.rotationIndex or 1 })
-        lastSave = os.clock()
-    end
-    function Rotation.clearResume() State.clearCheckpoint("rotation") end
-    local function refreshResume()
-        if App.pending == 0 and os.clock() - lastSave >= 120 then
-            local ok, issue = pcall(Rotation.saveResume)
-            if not ok then App.rotationResumeError = tostring(issue) end
-        end
-    end
+    local resumePoint = G.Jobs.checkpointer("rotation", function() return { worldIndex = App.rotationIndex or 1 } end)
+    Rotation.saveResume, Rotation.clearResume = resumePoint.save, resumePoint.clear
+    local refreshResume = resumePoint.refresh
 
     local function info(text)
         App.rotationInfo = text
@@ -127,7 +118,7 @@ return function(G)
             if tileAt(side.x, side.y) == blockId then
                 soft(token, r.world.name, function() Pnb.breakTile(here, side, blockId, token) end)
             end
-            soft(token, r.world.name, function() Drops.collectNear(here, ids, token, Drops.REACH) end)
+            soft(token, r.world.name, function() Drops.collectNear(here, ids, token, Drops.reach()) end)
             local inside = tileAt(side.x, side.y)
             assert(inside == 0 or inside == blockId or inside == seedId,
                 "Tile PNB rotasi terisi item lain di " .. side.x .. ", " .. side.y .. ".")
@@ -182,19 +173,17 @@ return function(G)
     -- Return: jumlah pohon dipanen di world ini, dan detik sampai pohon tercepat berikutnya mateng.
     function Rotation.runWorld(index, token)
         local cfg = App.config.rotation
-        local name, seedId, target = cfg.worlds[index], cfg.seedId, cfg.blockTarget
-        local box = cfg.boxes[name]
+        local name, target = cfg.worlds[index], cfg.blockTarget
         App.rotationIndex = index
         Rotation.saveResume()
-        local r = Bridge.runtime()
-        if r.world.name ~= name or Bridge.pickerOpen(r) then
-            info(string.format("Rotasi world %d/%d: masuk %s...", index, #cfg.worlds, name))
-            Movement.enterWorld(name, token, { label = "Rotation", resumeButton = "Rotation",
-                save = Rotation.saveResume })
+        -- Masuk + scan otomatis: tanaman = seed terbanyak di world, Display Box dicari otomatis.
+        local setup, why = Harvest.setupWorld(name, token, string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume)
+        App.rotationWorlds = App.rotationWorlds or {}
+        if not setup then
+            App.rotationWorlds[name] = "dilewati: " .. why
+            return 0, nil
         end
-        r = worldCheck(name, token)
-        local blockId = Core.blockForSeed(r.items, seedId)
-        G.Storage.count(box, blockId, seedId) -- box harus kosong / berisi blok & seed tanaman ini saja
+        local r, seedId, blockId, box = setup.r, setup.seedId, setup.blockId, setup.box
         local ids = { blockId, seedId, Drops.GEM }
         local total, pending, plan = 0, {}, nil
         local stats = { harvested = 0, pnb = 0, replanted = 0 }
@@ -229,7 +218,7 @@ return function(G)
                         end)
                         if ok and got then
                             soft(token, name, function()
-                                Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.REACH)
+                                Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.reach())
                             end)
                             table.insert(harvested, point)
                             stats.harvested = stats.harvested + 1
@@ -327,39 +316,23 @@ return function(G)
                 and type(r.handlers.setTile) == "function" and type(r.handlers.plantSeed) == "function",
                 "Hook pukul/place/tanam tidak tersedia. Copy diagnostics dari Settings.")
         end,
-        -- Error di tengah jalan TIDAK langsung menghentikan rotasi:
+        -- Error di tengah jalan TIDAK langsung menghentikan rotasi (Jobs.resilient, anyError):
         --   keluar world / avatar mati (+ setting Rejoin) -> masuk lagi ke world itu, lanjut dari scan;
-        --   error lain (pukul gagal, jalan timeout, request box gagal, dll.) -> tunggu 3 detik, ulangi
-        --   world itu dari scan. Berhenti kalau gagal 5x berturut-turut tanpa kemajuan sama sekali.
+        --   error lain (jalan timeout, request box gagal, dll.) -> tunggu 3 detik, ulangi world itu dari
+        --   scan. Berhenti kalau gagal 5x berturut-turut tanpa kemajuan sama sekali.
         run = function(token, saved)
             if App.config.options.autoRejoin then Movement.queueResume() end
-            local failures, mark = 0, nil
-            local resume = saved
-            while true do
-                local completed, problem = pcall(Rotation.run, token, resume)
-                if completed then break end
-                checkpoint(token)
-                local name = App.config.rotation.worlds[App.rotationIndex or 1]
-                problem = Movement.classifyFault(problem, token, name)
-                local left = type(problem) == "table" and problem.recoverable
-                if left and not App.config.options.autoRejoin then error(problem, 0) end
-                local now = (App.stats.trees or 0) + (App.stats.broken or 0) + (App.stats.replanted or 0)
-                if mark ~= now then failures = 0 end
-                failures, mark = failures + 1, now
-                App.rotationLastError = os.date("%H:%M:%S") .. " " .. tostring(problem)
-                assert(failures <= 5, "Rotation gagal 5x tanpa kemajuan: " .. tostring(problem)
-                    .. ". Tekan Resume rotation setelah dicek.")
-                if left then App.rotationRejoins = (App.rotationRejoins or 0) + 1
-                else App.rotationRetries = (App.rotationRetries or 0) + 1 end
-                resume = { worldIndex = App.rotationIndex or 1 }
-                info((left and "Keluar dari world" or "Error") .. " (" .. tostring(problem) .. "). Ulangi world ini ("
-                    .. failures .. "/5)...")
-                Movement.releaseControls()
-                pause(3, token)
-                Movement.takeControls()
-            end
+            G.Jobs.resilient(token, saved, {
+                label = "Rotation", anyError = true, maxFailures = 5, wait = 3,
+                world = function() return App.config.rotation.worlds[App.rotationIndex or 1] end,
+                progress = function() return (App.stats.trees or 0) + (App.stats.broken or 0) + (App.stats.replanted or 0) end,
+                loop = Rotation.run,
+                onRetry = function() return { worldIndex = App.rotationIndex or 1 } end,
+            })
         end,
         clear = function() Rotation.clearResume() end,
+        resume = true,
+        validResume = function(data) return type(data.worldIndex) == "number" end,
     })
     -- Lanjut rotasi dari checkpoint (world terakhir yang dikerjakan). Dipakai tombol "Resume rotation"
     -- setelah rotasi berhenti karena error, dan otomatis setelah pindah server.
@@ -370,75 +343,35 @@ return function(G)
         App.config, App.profile = record.config, Core.profileName(record.profile)
         G.Jobs.start("rotation", record.data)
     end
-    table.insert(G.resumeHandlers, 1, function()
-        local record = State.loadCheckpoint("rotation")
-        if not record or type(record.data) ~= "table" or type(record.data.worldIndex) ~= "number" then return false end
-        App.config, App.profile = record.config, Core.profileName(record.profile)
-        G.Jobs.start("rotation", record.data)
-        return true
-    end)
+
 
     ---------------------------------------------------------------- tab Rotation
     function Rotation.buildTab(tab)
-        local UI, Scan, Storage = G.UI, G.Scan, G.Storage
-        local controls, lookup, syncing = {}, {}, true
+        local UI = G.UI
+        local controls, syncing = {}, true
         UI.addStatus(tab:Paragraph({ Title = "Status", Desc = App.status }))
-        tab:Paragraph({ Title = "Cara kerja", Desc = "Per world di list: scan -> harvest pohon mateng sampai blok di tas = target -> PNB di 1 tile kosong di samping sampai blok habis -> replant tile yang dipanen -> ulangi sampai tidak ada pohon mateng -> simpan sisa ke Display Box world itu -> world berikutnya (muter)." })
+        tab:Paragraph({ Title = "Cara kerja", Desc = "Per world di list: masuk & scan otomatis (tanaman = seed terbanyak, Display Box dicari otomatis) -> harvest pohon mateng sampai blok di tas = target -> PNB 1 tile kosong di samping sampai blok habis -> replant (atas, bekas panen, sisa farm) -> ulangi sampai tidak ada pohon mateng -> simpan seed sisa ke box -> world berikutnya (muter)." })
         local function setOption(fn)
             if syncing then return end
             local ok, message = pcall(function() Net.idle(); fn(); State.saveSession() end)
             if not ok then G.notify(tostring(message)) end
         end
-        local function choices()
-            local values, selected = {}, nil
-            lookup = {}
-            local r = App.runtime
-            for id, tree in pairs(App.scanTrees or {}) do
-                local label = string.format("%s (%d) - %d mateng / %d pohon", r and r.items[id] and r.items[id].name or "Seed", id, tree.ripe, tree.total)
-                table.insert(values, label)
-                lookup[label] = id
-                if id == App.config.rotation.seedId then selected = label end
-            end
-            table.sort(values)
-            return values, selected
-        end
         function Rotation.refreshTab()
-            local cfg, lines = App.config.rotation, {}
-            for i, name in ipairs(cfg.worlds) do
-                local box = cfg.boxes[name]
-                table.insert(lines, string.format("%d. %s: %s%s", i, name, box and ("box " .. box.x .. ", " .. box.y) or "BELUM ADA BOX",
-                    App.rotationWorlds and App.rotationWorlds[name] and (" | " .. App.rotationWorlds[name]) or ""))
+            local lines = {}
+            for i, name in ipairs(App.config.rotation.worlds) do
+                table.insert(lines, i .. ". " .. name .. (App.rotationWorlds and App.rotationWorlds[name] and (": " .. App.rotationWorlds[name]) or ""))
             end
             UI.paragraph(controls.list, "World rotasi", #lines > 0 and table.concat(lines, "\n") or "Belum ada world.")
         end
-        Scan.buildTab(tab, function()
-            local values, selected = choices()
-            pcall(function() controls.crop:Refresh(values) end)
-            if selected then pcall(function() controls.crop:Select(selected) end) end
-        end)
-        pcall(function() tab:Section({ Title = "Rotation" }) end)
-        controls.worlds = tab:Input({ Title = "World farm rotasi (urut)", Value = table.concat(App.config.rotation.worlds, ", "),
-            Placeholder = "FARM1, FARM2, FARM3", Desc = "Terpisah dari list world Planting. Pisahkan dengan koma.",
+        tab:Input({ Title = "World farm rotasi (urut)", Value = table.concat(App.config.rotation.worlds, ", "),
+            Placeholder = "FARM1, FARM2, FARM3", Desc = "Terpisah dari list world Planting & Harvest. Pisahkan dengan koma.",
             Callback = function(value)
                 setOption(function() App.config.rotation.worlds = Core.parseWorlds(value or "") end)
                 Rotation.refreshTab()
             end })
-        controls.crop = tab:Dropdown({ Title = "Tanaman rotasi", Desc = "Muncul setelah Scan world.", Values = {},
-            Callback = function(value)
-                if type(value) == "table" then value = value[1] end
-                setOption(function() App.config.rotation.seedId = assert(lookup[value], "Pilih tanaman.") end)
-            end })
         tab:Slider({ Title = "Harvest sampai blok di tas", Step = 1,
             Value = { Min = 10, Max = 200, Default = App.config.rotation.blockTarget },
             Callback = function(value) setOption(function() App.config.rotation.blockTarget = math.floor(tonumber(value)) end) end })
-        tab:Button({ Title = "Set Display Box world ini", Desc = "Masuk tiap world di list, berdiri di samping Display Box-nya, tekan ini. Seed sisa & blok disimpan di sini.",
-            Callback = UI.action(function()
-                local box = Storage.captureNearby("rotationBox", "box")
-                App.config.points.rotationBox = nil
-                App.config.rotation.boxes[box.world] = box
-                Rotation.refreshTab()
-                G.setStatus("Display Box rotasi untuk " .. box.world .. " disimpan: tile " .. box.x .. ", " .. box.y .. ".")
-            end) })
         controls.list = tab:Paragraph({ Title = "World rotasi", Desc = "Belum ada world." })
         G.Jobs.toggles.rotation = tab:Toggle({ Title = "Rotation", Value = false,
             Desc = "Jalan terus sampai di-stop. Mulai dari world pertama di list.",

@@ -1,5 +1,5 @@
 -- pnb.lua: Place & Break dengan grid 5x5 (layout terinspirasi Crusader), stock & seed lewat Display Box,
--- dan perekam aksi game untuk menemukan cara drop seed.
+-- dan Auto Collect.
 -- placeTile/breakTile/settleTile diadaptasi dari Clarissv main.lua v0.1.43; bedanya grid bisa
 -- sampai 24 tile di sekitar karakter, dan tile yang terisi blok lain dilewati, bukan error.
 return function(G)
@@ -170,7 +170,7 @@ return function(G)
     function Pnb.autoCollectTick()
         local options = App.config and App.config.options
         if not (App.alive and options and options.autoCollect) or App.job or App.pending > 0
-            or App.configuring or App.recording or App.autoCollectHold or App.teleporting then return false end
+            or App.configuring or App.autoCollectHold or App.teleporting then return false end
         if os.clock() > autoReset then autoAttempts, autoReset = {}, os.clock() + 15 end
         local okRuntime, r = pcall(Bridge.runtime)
         if not okRuntime or type(r) ~= "table" or not r.world or not r.inventory then return false end
@@ -205,29 +205,13 @@ return function(G)
     -- Adaptasi Clarissv v0.1.43: savePNBResume, refreshPNBCheckpoint, classifyPNBFault, recoverPNB.
     -- Setting "Rejoin world and return to PNB" (options.autoRejoin): kalau terlempar ke world picker,
     -- avatar mati/respawn, atau pindah server, masuk lagi ke world PNB lalu jalan balik ke spot.
-    local lastResumeSave = -math.huge
-    function Pnb.saveResume()
-        State.saveCheckpoint("pnb", { anchor = App.config.points.pnb })
-        lastResumeSave = os.clock()
-    end
-    function Pnb.clearResume() State.clearCheckpoint("pnb") end
-    -- Diperbarui tiap 2 menit supaya checkpoint tidak dianggap basi saat PNB jalan lama.
-    local function refreshResume()
-        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastResumeSave >= 120 then
-            local ok, issue = pcall(Pnb.saveResume)
-            if not ok then App.pnbResumeError = tostring(issue) end
-        end
-    end
-
-    function Pnb.classifyFault(problem, token)
-        return Movement.classifyFault(problem, token, App.config.points.pnb.world)
-    end
+    local resumePoint = G.Jobs.checkpointer("pnb", function() return { anchor = App.config.points.pnb } end)
+    Pnb.saveResume, Pnb.clearResume = resumePoint.save, resumePoint.clear
 
     -- Masuk lagi ke world PNB (lewat world picker, bisa pindah server) lalu jalan ke spot.
     function Pnb.returnToSpot(token)
         local anchor = App.config.points.pnb
         App.recovering = true
-        App.pnbRejoins = (App.pnbRejoins or 0) + 1
         G.setStatus("Masuk lagi ke " .. anchor.world .. "...")
         Movement.enterWorld(anchor.world, token, { save = Pnb.saveResume, label = "Place & Break",
             resumeButton = "Place & Break" })
@@ -254,7 +238,7 @@ return function(G)
         while true do
             checkpoint(token)
             worldCheck(anchor.world, token)
-            refreshResume()
+            resumePoint.refresh()
             holdAnchor(anchor, token)
             refreshInventory(token)
             if seedId and App.config.pnb.autoDrop and count(seedId) >= App.config.options.seedThreshold then
@@ -299,163 +283,27 @@ return function(G)
             if saved and saved.anchor then App.config.points.pnb = saved.anchor
             else App.config.points.pnb = Pnb.standingTile() end
         end,
-        -- Sama seperti Clarissv: error "recoverable" + setting Rejoin nyala = masuk lagi ke world,
-        -- balik ke spot, lanjut PNB. Pemulihan yang terganggu 3x berturut-turut = berhenti.
+        -- Sama seperti Clarissv: keluar world / avatar mati + setting Rejoin nyala = masuk lagi ke
+        -- world, balik ke spot, lanjut PNB (Jobs.resilient). Gagal 3x tanpa kemajuan = berhenti.
         run = function(token, saved)
-            local anchor = App.config.points.pnb
-            if saved then
-                local r = Bridge.runtime()
-                if r.world.name ~= anchor.world or Bridge.pickerOpen(r) then Pnb.returnToSpot(token) end
-            end
-            while true do
-                local completed, problem = pcall(Pnb.run, token)
-                if completed then break end
-                checkpoint(token)
-                problem = Pnb.classifyFault(problem, token)
-                if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
-                    error(problem, 0)
-                end
-                local interruptions = 0
-                while true do
-                    local recovered, nextProblem = pcall(Pnb.returnToSpot, token)
-                    if recovered then break end
-                    checkpoint(token)
-                    if type(nextProblem) ~= "table" or not nextProblem.recoverable then error(nextProblem, 0) end
-                    interruptions = interruptions + 1
-                    assert(interruptions < 3, "Pemulihan terganggu 3x. Cek world tersimpan dan koneksi.")
-                end
-            end
+            G.Jobs.resilient(token, saved, {
+                label = "Place & Break",
+                world = function() return App.config.points.pnb.world end,
+                progress = function() return App.stats.broken end,
+                loop = function(loopToken, resume)
+                    local anchor, r = App.config.points.pnb, Bridge.runtime()
+                    if resume and (r.world.name ~= anchor.world or Bridge.pickerOpen(r) or resume.retry) then
+                        Pnb.returnToSpot(loopToken)
+                    end
+                    Pnb.run(loopToken)
+                end,
+            })
             Pnb.clearResume()
         end,
         clear = function() Pnb.clearResume() end,
+        resume = true, -- lanjut otomatis setelah pindah server
+        validResume = function(data) return type(data.anchor) == "table" end,
     })
-    -- Auto-resume setelah pindah server (loader dijalankan ulang lewat queue_on_teleport).
-    table.insert(G.resumeHandlers, function()
-        local record = State.loadCheckpoint("pnb")
-        if not record or type(record.data) ~= "table" or type(record.data.anchor) ~= "table" then return false end
-        App.config, App.profile = record.config, Core.profileName(record.profile)
-        G.Jobs.start("pnb", record.data)
-        return true
-    end)
-
-    ---------------------------------------------------------------- perekam aksi game
-    -- Bungkus sementara semua fungsi milik world dan touch controls, lalu catat setiap panggilan
-    -- (nama + argumen) selama `seconds` detik. Dipakai untuk mencari perintah drop item.
-    -- Fungsi yang dipanggil tiap frame tidak dibungkus sama sekali (hemat & tidak bikin lag).
-    local NOISY = { dir = true, jumping = true, dropList = true, backpackNow = true, state = true }
-    local function describe(value)
-        local kind = type(value)
-        if kind == "number" then
-            if value == math.floor(value) and math.abs(value) < 2^53 then return string.format("%d", value) end
-            return string.format("%.2f", value)
-        end
-        if kind == "boolean" then return tostring(value) end
-        if kind == "string" then return string.format("%q", #value > 24 and value:sub(1, 24) .. "..." or value) end
-        if kind == "table" then
-            local n = 0
-            pcall(function() for _ in next, value do n = n + 1 end end)
-            return "table(" .. n .. ")"
-        end
-        return kind
-    end
-    function Pnb.record(seconds)
-        Net.idle()
-        local r = Bridge.runtime()
-        local order, counts, byName, wrapped, started = {}, {}, {}, {}, os.clock()
-        local function wrap(owner, label)
-            if type(owner) ~= "table" then return end
-            for key, fn in next, owner do
-                if type(fn) == "function" and not NOISY[key] then
-                    local original, name = fn, label .. "." .. tostring(key)
-                    local wrapper = function(...)
-                        byName[name] = (byName[name] or 0) + 1
-                        local args = table.pack(...)
-                        local parts = {}
-                        for i = 1, math.min(args.n, 8) do parts[i] = describe(args[i]) end
-                        local signature = name .. "(" .. table.concat(parts, ", ") .. ")"
-                        if not counts[signature] then
-                            if #order >= 3000 then return original(...) end
-                            table.insert(order, { signature = signature, name = name, at = os.clock() - started })
-                            counts[signature] = 0
-                        end
-                        counts[signature] = counts[signature] + 1
-                        return original(...)
-                    end
-                    table.insert(wrapped, { owner = owner, key = key, original = original, wrapper = wrapper })
-                end
-            end
-        end
-        wrap(r.world, "world")
-        wrap(r.controls, "controls")
-        wrap(r.handlers, "handlers")
-        wrap(r.gemHud, "hud")
-        wrap(r.inventory, "inventory")
-        for _, item in ipairs(wrapped) do rawset(item.owner, item.key, item.wrapper) end
-        -- Lapis 2: sadap SEMUA kiriman ke server (FireServer/InvokeServer). Game menyimpan
-        -- fungsi lokal sendiri, jadi aksi seperti drop bisa lolos dari bungkus tabel di atas;
-        -- tapi apa pun yang dikirim ke server pasti lewat sini.
-        local X, remoteActive, remoteNote = G.exec, true, "tidak tersedia di executor ini"
-        if type(X.hookmetamethod) == "function" and type(X.getnamecallmethod) == "function" and X.game then
-            local old
-            local function note(remote, method, ...)
-                local first = ...
-                local name = "remote " .. tostring(remote) .. ":" .. method
-                    .. (type(first) == "string" and (" " .. first) or "")
-                byName[name] = (byName[name] or 0) + 1
-                local args = table.pack(...)
-                local parts = {}
-                for i = 1, math.min(args.n, 8) do parts[i] = describe(args[i]) end
-                local signature = name .. "(" .. table.concat(parts, ", ") .. ")"
-                if not counts[signature] then
-                    if #order >= 3000 then return end
-                    table.insert(order, { signature = signature, name = name, at = os.clock() - started, remote = true })
-                    counts[signature] = 0
-                end
-                counts[signature] = counts[signature] + 1
-            end
-            local hook = function(self, ...)
-                if remoteActive then
-                    local method = X.getnamecallmethod()
-                    if (method == "FireServer" or method == "InvokeServer")
-                        and not (X.checkcaller and X.checkcaller()) then
-                        pcall(note, self, method, ...)
-                    end
-                end
-                return old(self, ...)
-            end
-            local ok, result = pcall(X.hookmetamethod, X.game, "__namecall", X.newcclosure and X.newcclosure(hook) or hook)
-            if ok and type(result) == "function" then old, remoteNote = result, "aktif" else remoteNote = "gagal: " .. tostring(result) end
-        end
-        App.recording = true
-        App.recordReport = { "Rekaman berjalan... tunggu status 'Rekaman selesai'." }
-        G.setStatus("Merekam " .. seconds .. " detik. Drop seed secara MANUAL sekarang. Copy diagnostics SETELAH status 'Rekaman selesai'.")
-        task.delay(seconds, function()
-            for _, item in ipairs(wrapped) do
-                if rawget(item.owner, item.key) == item.wrapper then rawset(item.owner, item.key, item.original) end
-            end
-            App.recording = false
-            remoteActive = false -- hook tetap terpasang tapi cuma meneruskan (aman)
-            -- Yang ditampilkan: semua world.call, lalu panggilan JARANG (<= 3x) = aksi manual.
-            -- Fungsi yang dipanggil ribuan kali (per frame) cuma diringkas jumlahnya.
-            local report = { "Sadap server: " .. remoteNote }
-            for _, entry in ipairs(order) do
-                if entry.name == "world.call" or (counts[entry.signature] <= 3 and byName[entry.name] <= 30) then
-                    if #report < 40 then
-                        table.insert(report, string.format("%.1fs  %s x%d", entry.at, entry.signature, counts[entry.signature]))
-                    end
-                end
-            end
-            if #report == 1 then table.insert(report, "Tidak ada panggilan jarang. Drop seed belum tercatat; coba lagi.") end
-            local busy = {}
-            for name, n in pairs(byName) do if n > 30 then table.insert(busy, { name = name, n = n }) end end
-            table.sort(busy, function(a, b) return a.n > b.n end)
-            local parts = {}
-            for i = 1, math.min(8, #busy) do parts[i] = busy[i].name .. " " .. busy[i].n end
-            if #parts > 0 then table.insert(report, "Sering (diabaikan): " .. table.concat(parts, ", ")) end
-            App.recordReport = report
-            G.setStatus("Rekaman selesai. Copy diagnostics di Settings dan kirim.")
-        end)
-    end
 
     ---------------------------------------------------------------- tab Place & Break
     local function tileSet()

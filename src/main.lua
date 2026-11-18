@@ -46,9 +46,6 @@ return function(modules, VERSION)
         getupvalue = getupvalue or (debug and debug.getupvalue),
         debugInfo = debug and debug.info, getinfo = getinfo or (debug and debug.getinfo),
         getrawmetatable = getrawmetatable, setclipboard = setclipboard or toclipboard,
-        -- Untuk perekam aksi: menyadap panggilan ke server (RemoteEvent/RemoteFunction).
-        hookmetamethod = hookmetamethod, getnamecallmethod = getnamecallmethod,
-        newcclosure = newcclosure, checkcaller = checkcaller, game = game,
         sharedTables = { { label = "executor shared", value = shared }, { label = "executor globals", value = env.shared } },
     }
     if type(getrenv) == "function" then
@@ -133,17 +130,29 @@ return function(modules, VERSION)
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
                 .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
                 .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),
-            "Rejoin & balik ke PNB/Harvest: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang PNB "
-                .. tostring(App.pnbRejoins or 0) .. "x, Harvest " .. tostring(App.harvestRejoins or 0) .. "x"
-                .. ((App.pnbResumeError or App.harvestResumeError) and ("; checkpoint error: " .. tostring(App.pnbResumeError or App.harvestResumeError)) or ""),
+            (function()
+                local function counts(map)
+                    local parts = {}
+                    for _, key in ipairs({ "Place & Break", "Harvest", "Rotation" }) do
+                        if map[key] then table.insert(parts, key .. " " .. map[key] .. "x") end
+                    end
+                    return #parts > 0 and table.concat(parts, ", ") or "0"
+                end
+                local errors = {}
+                for name, issue in pairs(App.resumeErrors or {}) do table.insert(errors, name .. ": " .. issue) end
+                return "Rejoin: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang " .. counts(App.rejoins or {})
+                    .. "; diulang karena error " .. counts(App.retries or {})
+                    .. (App.lastRetryError and ("; terakhir: " .. App.lastRetryError) or "")
+                    .. (#errors > 0 and ("; checkpoint error: " .. table.concat(errors, ", ")) or "")
+            end)(),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Rotation: " .. tostring(App.rotationInfo or "-") .. " | world ke-" .. tostring(App.rotationIndex or "-")
-                .. ", putaran " .. tostring(App.rotationLaps or 0) .. ", masuk ulang " .. tostring(App.rotationRejoins or 0) .. "x"
-                .. ", ulang karena error " .. tostring(App.rotationRetries or 0) .. "x"
+                .. ", putaran " .. tostring(App.rotationLaps or 0)
                 .. ", error kecil dilewati " .. tostring(App.rotationSoftErrors or 0) .. "x"
-                .. (App.rotationLastError and ("; error terakhir: " .. App.rotationLastError) or ""),
-            "Harvest: " .. tostring(App.harvestPlan or "-") .. " | seed " .. tostring(App.config.harvesting.seedId)
-                .. ", replant " .. tostring(App.config.harvesting.replant) .. ", box " .. G.Storage.pointText(App.config.points.farmBox),
+                .. (App.rotationLastError and ("; error kecil terakhir: " .. App.rotationLastError) or ""),
+            "Harvest: " .. tostring(App.harvestPlan or "-") .. " | world ke-" .. tostring(App.harvestIndex or "-")
+                .. ", replant " .. tostring(App.config.harvesting.replant),
+            "Jangkauan pungut server: " .. G.Drops.reachText(),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
                 .. tostring(App.config and App.config.options.collectRange) .. ", " .. tostring(App.autoCollectInfo or "-"),
@@ -155,10 +164,6 @@ return function(modules, VERSION)
         if App.scanReport then
             table.insert(lines, "World Scan:")
             for _, line in ipairs(App.scanReport) do table.insert(lines, "  " .. line) end
-        end
-        if App.recordReport then
-            table.insert(lines, "Rekaman aksi game:")
-            for _, line in ipairs(App.recordReport) do table.insert(lines, "  " .. line) end
         end
         table.insert(lines, "Log:")
         for i = 1, math.min(#App.logs, 15) do table.insert(lines, App.logs[i]) end

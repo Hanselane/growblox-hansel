@@ -184,41 +184,6 @@ T.test("Profil lama: stock position di lantai dibuang, set ulang di samping box"
     local out = Core.validate({ blockId = 40, points = { stock = { world = "PNBW", x = 3, y = 9 } } })
     T.eq(out.points.stock, nil)
 end)
-T.test("Perekam menampilkan panggilan jarang walau ada noise per frame", function()
-    local sim = setup()
-    sim.world.signText = function() end
-    sim.G.Pnb.record(1)
-    for i = 1, 200 do sim.world.signText(i % 7, 6) end -- noise: ratusan panggilan
-    sim.world.call("DropItem", SEED, 5)
-    sim.S.run(1.5)
-    sim.S.restore()
-    local text = table.concat(sim.App.recordReport, "\n")
-    T.eq(text:find('world.call("DropItem", 41, 5) x1', 1, true) ~= nil, true, text)
-    T.eq(text:find("signText(", 1, true) == nil, true, "noise tidak ditampilkan: " .. text)
-    T.eq(text:find("world.signText 200", 1, true) ~= nil, true, "noise diringkas: " .. text)
-end)
-T.test("Perekam menyadap kiriman ke server (FireServer) walau game pakai fungsi lokal", function()
-    local sim = setup()
-    local namecall, method = nil, nil
-    local original = function(self, ...) return "sent" end
-    local saved = {}
-    for k, v in pairs(sim.G.exec) do saved[k] = v end
-    sim.G.exec.game = {}
-    sim.G.exec.getnamecallmethod = function() return method end
-    sim.G.exec.hookmetamethod = function(_, name, fn) namecall = fn; return original end
-    sim.G.Pnb.record(1)
-    local remote = setmetatable({}, { __tostring = function() return "Net" end })
-    method = "FireServer"
-    for i = 1, 100 do namecall(remote, "Move", i) end -- noise per frame
-    T.eq(namecall(remote, "Drop", 41, 5), "sent", "kiriman diteruskan ke fungsi asli")
-    sim.S.run(1.5)
-    sim.S.restore()
-    for k in pairs(sim.G.exec) do sim.G.exec[k] = saved[k] end
-    local text = table.concat(sim.App.recordReport, "\n")
-    T.eq(text:find('remote Net:FireServer Drop("Drop", 41, 5) x1', 1, true) ~= nil, true, text)
-    T.eq(text:find("Sadap server: aktif", 1, true) ~= nil, true, text)
-    T.eq(text:find('"Move"', 1, true) == nil, true, "noise disembunyikan: " .. text)
-end)
 T.test("Auto Collect saat idle: pungut semua item dalam jangkauan, yang jauh dibiarkan", function()
     local sim = setup({ floor = { { id = BLOCK, n = 4, x = 11.5, y = 9.5 }, { id = 18, n = 2, x = 9.5, y = 9.5 },
         { id = SEED, n = 3, x = 17.5, y = 9.5 } } })
@@ -311,6 +276,27 @@ T.test("Profil lama: seed drop tanpa box dibuang, bukan bikin profil rusak", fun
     T.eq(out.points.seedDrop, nil)
 end)
 
+T.test("PNB 5x5: server terima pungut dari jauh -> diukur, drop pinggir grid diambil tanpa jalan", function()
+    local sim = setup({ blocks = 2, reach = 3.2, tiles = { { dx = -2, dy = -1 }, { dx = 2, dy = -1 } } })
+    local walks = 0
+    local moveTo = sim.G.Movement.moveTo
+    sim.G.Movement.moveTo = function(x, ...) if x ~= 10 then walks = walks + 1 end; return moveTo(x, ...) end
+    sim.G.Jobs.start("pnb")
+    waitJob(sim, 200)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.server[SEED], 2, "2 seed dari pinggir grid terambil")
+    T.eq(walks, 0, "tidak jalan ke drop")
+    T.eq(sim.App.reach.okMax >= 2, true, "jangkauan terukur: " .. sim.G.Drops.reachText())
+end)
+T.test("Jangkauan pungut: setelah ditolak, cuma pakai jarak yang terbukti diterima", function()
+    local sim = setup({ blocks = 2, reach = 1.3, tiles = { { dx = -2, dy = -1 }, { dx = 2, dy = -1 } } })
+    sim.G.Jobs.start("pnb")
+    waitJob(sim, 200)
+    sim.S.restore()
+    T.eq(sim.App.reach.no >= 1, true, "ada penolakan tercatat")
+    T.eq(sim.G.Drops.reach().radius <= 1.3, true, "jangkauan dipakai: " .. sim.G.Drops.reachText())
+end)
 T.test("PNB 5x5: drop di pinggir grid (2 tile, di luar jangkauan server) tetap terambil", function()
     local sim = setup({ blocks = 2, reach = 1.3, tiles = { { dx = -2, dy = -1 }, { dx = 2, dy = -1 } } })
     sim.G.Jobs.start("pnb")
@@ -321,19 +307,6 @@ T.test("PNB 5x5: drop di pinggir grid (2 tile, di luar jangkauan server) tetap t
     T.eq(sim.server[SEED], 2, "2 seed dari tile x 8 dan x 12 terambil")
     T.eq(#sim.drops, 0, "lantai bersih")
     T.eq(math.abs(sim.avatar.x - 10.5) < 0.35, true, "balik ke spot")
-end)
-
-T.test("Perekam mencatat panggilan game lalu memulihkan fungsi asli", function()
-    local sim = setup()
-    local originalCall = sim.world.call
-    sim.G.Pnb.record(1)
-    sim.world.call("DropItem", SEED, 5)
-    sim.world.call("DropItem", SEED, 5)
-    sim.S.run(1.5)
-    sim.S.restore()
-    T.eq(sim.world.call, originalCall, "world.call dipulihkan")
-    local text = table.concat(sim.App.recordReport, "\n")
-    T.eq(text:find('world.call("DropItem", 41, 5) x2', 1, true) ~= nil, true, text)
 end)
 
 T.test("Rejoin: terlempar ke world picker saat PNB -> masuk lagi, balik ke spot, lanjut", function()

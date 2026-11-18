@@ -32,7 +32,7 @@ function Core.defaults()
     return {
         version = Core.CONFIG_VERSION, blockId = 0, points = {}, options = options,
         planting = { seedId = 0, storageWorld = "", worlds = {} },
-        harvesting = { method = "fist", seedId = 0, replant = false },
+        harvesting = { method = "fist", seedId = 0, replant = false, worlds = {} },
         -- Rotation: list world farm sendiri (terpisah dari Planting), Display Box per world.
         rotation = { worlds = {}, seedId = 0, blockTarget = 180, boxes = {} },
         -- PNB: tiles = kotak yang di-place & break, relatif ke posisi berdiri (dx kanan, dy bawah).
@@ -189,6 +189,16 @@ function Core.validate(input)
                 out.rotation.boxes[name] = { world = name, x = point.x, y = point.y, standX = point.standX, standY = point.standY }
             end
         end
+    end
+    if harvesting.worlds ~= nil then
+        assert(type(harvesting.worlds) == "table", "List world harvest rusak.")
+        local seen = {}
+        for index, value in ipairs(harvesting.worlds) do
+            local name = Core.worldName(value)
+            assert(not seen[name], "World harvest dobel: " .. name)
+            seen[name], out.harvesting.worlds[index] = true, name
+        end
+        assert(#out.harvesting.worlds <= 50, "Maksimal 50 world harvest.")
     end
     if harvesting.replant ~= nil then
         assert(type(harvesting.replant) == "boolean", "Setting replant tidak valid.")
@@ -355,18 +365,11 @@ end
 -- Syarat sebelum task boleh mulai. Mode lain ditambah bareng fiturnya.
 function Core.checkSetup(config, mode, items)
     if mode == "rotation" then
-        local rot = config.rotation
-        assert(items[rot.seedId] and items[rot.seedId].kind == "seed", "Pilih tanaman rotasi (Scan world dulu).")
-        assert(#rot.worlds > 0, "Isi list world farm rotasi.")
-        for _, name in ipairs(rot.worlds) do
-            assert(rot.boxes[name], "Set Display Box di world " .. name .. " dulu (masuk world itu, berdiri di samping box).")
-        end
+        assert(#config.rotation.worlds > 0, "Isi list world farm rotasi.")
         return true
     end
     if mode == "harvest" then
-        local seedId = config.harvesting.seedId
-        assert(items[seedId] and items[seedId].kind == "seed", "Pilih tanaman yang mau dipanen (Scan world dulu).")
-        assert(config.points.farmBox, "Set Display Box farm dulu (berdiri di sampingnya).")
+        assert(#config.harvesting.worlds > 0, "Isi list world harvest.")
         return true
     end
     if mode == "plant" then

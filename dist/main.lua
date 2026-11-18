@@ -1,5 +1,5 @@
--- Growblox Hansel v0.5.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.5.3"
+-- Growblox Hansel v0.6.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.0"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -38,7 +38,7 @@ function Core.defaults()
     return {
         version = Core.CONFIG_VERSION, blockId = 0, points = {}, options = options,
         planting = { seedId = 0, storageWorld = "", worlds = {} },
-        harvesting = { method = "fist", seedId = 0, replant = false },
+        harvesting = { method = "fist", seedId = 0, replant = false, worlds = {} },
         -- Rotation: list world farm sendiri (terpisah dari Planting), Display Box per world.
         rotation = { worlds = {}, seedId = 0, blockTarget = 180, boxes = {} },
         -- PNB: tiles = kotak yang di-place & break, relatif ke posisi berdiri (dx kanan, dy bawah).
@@ -195,6 +195,16 @@ function Core.validate(input)
                 out.rotation.boxes[name] = { world = name, x = point.x, y = point.y, standX = point.standX, standY = point.standY }
             end
         end
+    end
+    if harvesting.worlds ~= nil then
+        assert(type(harvesting.worlds) == "table", "List world harvest rusak.")
+        local seen = {}
+        for index, value in ipairs(harvesting.worlds) do
+            local name = Core.worldName(value)
+            assert(not seen[name], "World harvest dobel: " .. name)
+            seen[name], out.harvesting.worlds[index] = true, name
+        end
+        assert(#out.harvesting.worlds <= 50, "Maksimal 50 world harvest.")
     end
     if harvesting.replant ~= nil then
         assert(type(harvesting.replant) == "boolean", "Setting replant tidak valid.")
@@ -361,18 +371,11 @@ end
 -- Syarat sebelum task boleh mulai. Mode lain ditambah bareng fiturnya.
 function Core.checkSetup(config, mode, items)
     if mode == "rotation" then
-        local rot = config.rotation
-        assert(items[rot.seedId] and items[rot.seedId].kind == "seed", "Pilih tanaman rotasi (Scan world dulu).")
-        assert(#rot.worlds > 0, "Isi list world farm rotasi.")
-        for _, name in ipairs(rot.worlds) do
-            assert(rot.boxes[name], "Set Display Box di world " .. name .. " dulu (masuk world itu, berdiri di samping box).")
-        end
+        assert(#config.rotation.worlds > 0, "Isi list world farm rotasi.")
         return true
     end
     if mode == "harvest" then
-        local seedId = config.harvesting.seedId
-        assert(items[seedId] and items[seedId].kind == "seed", "Pilih tanaman yang mau dipanen (Scan world dulu).")
-        assert(config.points.farmBox, "Set Display Box farm dulu (berdiri di sampingnya).")
+        assert(#config.harvesting.worlds > 0, "Isi list world harvest.")
         return true
     end
     if mode == "plant" then
@@ -2100,6 +2103,56 @@ return function(G)
         return taken
     end
 
+    ---------------------------------------------------------------- deteksi box otomatis
+    -- Cari Display Box di world sekarang yang boleh dipakai untuk menyimpan `allowed` (daftar id):
+    -- isinya kosong atau hanya item `allowed`. Box yang sudah berisi item itu didahulukan, lalu box
+    -- kosong; kalau seri, yang paling dekat karakter. Posisi berdiri = tile di samping box (kiri,
+    -- kanan, di box itu sendiri, 2 tile kiri/kanan) yang bisa dipijak. Return: point box.
+    function Storage.findBox(allowed)
+        local r, state = Bridge.runtime(), position()
+        local map = Movement.navigationMap(r)
+        local ok = {}
+        for _, id in ipairs(allowed) do ok[id] = true end
+        local function standable(x, y)
+            if x < 0 or x >= r.world.w or y < 0 or y + 1 >= r.world.h then return false end
+            return not map.solid(x, y) and (map.solid(x, y + 1) or map.platform(x, y + 1)) and true or false
+        end
+        local best, bestRank
+        local seen, skipped = 0, 0
+        for y = 0, r.world.h - 1 do
+            local row = r.world.fg[y]
+            for x = 0, r.world.w - 1 do
+                local item = row and r.items[row[x] or 0]
+                if item and item.display and not item.displayOne then
+                    seen = seen + 1
+                    local rows = r.world.displays.get(x, y) or {}
+                    local usable, used = true, false
+                    for _, entry in pairs(rows) do
+                        if type(entry) == "table" then
+                            if ok[entry[1]] then used = true else usable = false end
+                        end
+                    end
+                    local stand
+                    for _, dx in ipairs({ -1, 1, 0, -2, 2 }) do
+                        if standable(x + dx, y) then stand = { x = x + dx, y = y }; break end
+                    end
+                    if usable and stand then
+                        local distance = math.abs(x + 0.5 - state.x) + math.abs(y + 1 - state.y)
+                        local rank = (used and 0 or 100000) + distance
+                        if not bestRank or rank < bestRank then
+                            best, bestRank = { world = r.world.name, x = x, y = y, standX = stand.x, standY = stand.y }, rank
+                        end
+                    else
+                        skipped = skipped + 1
+                    end
+                end
+            end
+        end
+        assert(best, string.format("Tidak ada Display Box yang bisa dipakai di %s (%d box, %d berisi item lain / tidak bisa didekati). "
+            .. "Taruh 1 Display Box kosong di world ini.", r.world.name, seen, skipped))
+        return best
+    end
+
     ---------------------------------------------------------------- simpan posisi box
     function Storage.pointText(point)
         if not point then return "Belum disimpan" end
@@ -2169,6 +2222,8 @@ return function(G)
             local want = math.floor(math.min(drop.n, room, 65535))
             if want > 0 and present and eligible(drop) then
                 local before, grid, uid, id = drop.n, r.world.fg, drop.uid, drop.id
+                local here = position()
+                local distance = math.max(math.abs(drop.x - here.x), math.abs(drop.y - (here.y - 0.5)))
                 if id ~= Drops.GEM then reserved[id] = (reserved[id] or 0) + want end
                 attempts[uid] = (attempts[uid] or 0) + 1
                 if App.controls then App.controls.suppressedTakes[uid] = nil end
@@ -2179,6 +2234,7 @@ return function(G)
                         if amount == nil then amount = 0 end
                         assert(type(amount) == "number" and amount >= 0 and amount <= want
                             and amount == math.floor(amount), "Invalid pickup response from the server.")
+                        Drops.noteReach(distance, amount > 0)
                         if amount > 0 and r.world.name == worldName and r.world.fg == grid then
                             r.world.dropTaken(uid, math.min(drop.n, math.max(0, before - amount)))
                             if id == Drops.GEM then App.stats.gems = App.stats.gems + amount end
@@ -2238,7 +2294,7 @@ return function(G)
                         local room = drop.id == Drops.GEM and 65535 or r.inventory:room(drop.id)
                         if room > 0 then
                             retryAt[drop.uid] = retryAt[drop.uid] or ((drop.refused or -math.huge) + 1)
-                            if (attempts[drop.uid] or 0) >= 3 then skipped = skipped + 1
+                            if (attempts[drop.uid] or 0) >= (options.maxAttempts or 3) then skipped = skipped + 1
                             elseif math.max(drop.readyAt or 0, retryAt[drop.uid]) > os.clock() then waiting = true
                             else table.insert(targets, drop) end
                         end
@@ -2269,9 +2325,33 @@ return function(G)
         end)
     end
 
-    -- Jangkauan pungut server Growblox (dari Clarissv collectDrops): 1.25 tile ke samping,
-    -- 1.5 ke atas, 1.25 ke bawah dari tile tempat berdiri. Lebih jauh dari itu ditolak server.
+    -- Ukur jangkauan pungut server: tiap pungut (dari posisi berdiri, tanpa jalan) dicatat jaraknya
+    -- (tile, ambil yang terbesar dari jarak samping / atas-bawah) dan diterima atau ditolak.
+    -- Hasilnya muncul di diagnostics, dan jarak terjauh yang pernah diterima dipakai sebagai
+    -- jangkauan pungut berikutnya (Drops.reach), jadi karakter tidak jalan kalau tidak perlu.
+    App.reach = App.reach or { ok = 0, no = 0, okMax = 0, noMin = math.huge }
+    function Drops.noteReach(distance, accepted)
+        local stat = App.reach
+        if accepted then
+            stat.ok, stat.okMax = stat.ok + 1, math.max(stat.okMax, distance)
+        else
+            stat.no, stat.noMin = stat.no + 1, math.min(stat.noMin, distance)
+        end
+    end
+    function Drops.reachText()
+        local stat = App.reach
+        return string.format("diterima %dx (terjauh %.2f tile), ditolak %dx (terdekat %s); dipakai %.2f tile",
+            stat.ok, stat.okMax, stat.no, stat.noMin == math.huge and "-" or string.format("%.2f tile", stat.noMin), Drops.reach().radius)
+    end
+
+    -- Jangkauan pungut server Growblox: bawaan dari Clarissv collectDrops (1.25 tile ke samping,
+    -- 1.5 ke atas, 1.25 ke bawah). Kalau server terbukti menerima lebih jauh, pakai jarak itu (maks 5).
     Drops.REACH = { radius = 1.25, up = 1.5, down = 1.25 }
+    function Drops.reach()
+        local learned = math.min(5, App.reach.okMax)
+        if learned <= Drops.REACH.radius then return Drops.REACH end
+        return { radius = learned, up = math.max(1.5, learned), down = math.max(1.25, learned) }
+    end
 
     -- Pungut semua drop `ids` di dalam `area` sekitar `anchor`. Yang di luar jangkauan server
     -- didatangi: cari lantai terdekat yang bisa dipakai memungut (Navigation.pickupGoal, sama
@@ -2299,8 +2379,12 @@ return function(G)
         -- 1) yang sudah terjangkau dari posisi sekarang
         local here = position()
         local stand = { world = anchor.world, x = math.floor(here.x), y = math.floor(here.y - 0.01) }
-        add(Drops.collectNear(stand, ids, token, { radius = Drops.REACH.radius, up = Drops.REACH.up,
-            down = Drops.REACH.down, attempts = attempts }))
+        -- Selama server belum pernah menolak, coba SELURUH area sekali dari tempat berdiri (tanpa
+        -- jalan) untuk mengukur jangkauan server. Setelah ada penolakan, cuma yang terbukti terjangkau.
+        local reach, probing = Drops.reach(), App.reach.no == 0
+        local near = probing and { radius = area.radius + math.abs(stand.x - anchor.x), up = area.up + 1, down = area.down + 1 } or reach
+        add(Drops.collectNear(stand, ids, token, { radius = near.radius, up = near.up,
+            down = near.down, attempts = attempts, maxAttempts = probing and 1 or 3 }))
         -- 2) datangi sisanya satu per satu, terdekat dulu
         for _ = 1, options.maxTrips or 40 do
             checkpoint(token)
@@ -2360,9 +2444,81 @@ return function(G)
     --   prepare(r, saved)   cek hook game yang dibutuhkan (opsional; saved = checkpoint resume)
     --   run(token, saved)   isi task; selesai normal = return, gagal = error
     --   clear()      hapus checkpoint fitur ini (dipanggil saat Stop / task lain mulai)
+    --   resume       true = checkpoint `mode` dilanjutkan otomatis setelah pindah server
+    --   validResume(data)   cek isi checkpoint sebelum dilanjutkan (opsional)
     -- }
     function Jobs.register(mode, spec)
         Jobs.specs[mode] = spec
+        if spec.resume then
+            table.insert(G.resumeHandlers, function()
+                local record = G.State.loadCheckpoint(mode)
+                if not record or type(record.data) ~= "table" then return false end
+                if spec.validResume and not spec.validResume(record.data) then return false end
+                App.config, App.profile = record.config, Core.profileName(record.profile)
+                Jobs.start(mode, record.data)
+                return true
+            end)
+        end
+    end
+
+    ---------------------------------------------------------------- dipakai bersama PNB, Harvest, Rotation
+    -- Checkpoint task: save() simpan data(), refresh() simpan ulang tiap 2 menit (supaya tidak basi
+    -- saat task jalan lama, batas 6 jam), clear() hapus. Error simpan dicatat, task tetap jalan.
+    App.resumeErrors = App.resumeErrors or {}
+    function Jobs.checkpointer(name, data)
+        local last = -math.huge
+        local cp = {}
+        function cp.save()
+            G.State.saveCheckpoint(name, data())
+            last = os.clock()
+        end
+        function cp.refresh()
+            if App.pending == 0 and os.clock() - last >= 120 then
+                local ok, issue = pcall(cp.save)
+                App.resumeErrors[name] = not ok and tostring(issue) or nil
+            end
+        end
+        function cp.clear() G.State.clearCheckpoint(name) end
+        return cp
+    end
+
+    -- Loop tahan banting (satu aturan untuk semua task):
+    --   keluar world / avatar mati  -> kalau setting Rejoin nyala, ulangi loop (loop masuk lagi ke world);
+    --                                   kalau mati, task berhenti;
+    --   error lain                  -> diulang hanya kalau opts.anyError (Rotation), selain itu berhenti;
+    --   gagal opts.maxFailures kali berturut-turut tanpa kemajuan (opts.progress tidak berubah) -> berhenti.
+    -- opts = { label, loop(token, resume), world() -> nama world task, progress() -> angka,
+    --          anyError, maxFailures (bawaan 3), wait (detik jeda sebelum ulang),
+    --          onRetry(problem, left) -> data resume untuk loop berikutnya }
+    App.rejoins, App.retries = App.rejoins or {}, App.retries or {}
+    function Jobs.resilient(token, resume, opts)
+        local failures, mark = 0, nil
+        local key = opts.label
+        while true do
+            local completed, problem = pcall(opts.loop, token, resume)
+            if completed then return end
+            Net.checkpoint(token)
+            problem = Movement.classifyFault(problem, token, opts.world())
+            local left = type(problem) == "table" and problem.recoverable
+            if left and not App.config.options.autoRejoin then error(problem, 0) end
+            if not left and not opts.anyError then error(problem, 0) end
+            local now = opts.progress and opts.progress() or 0
+            if mark ~= now then failures = 0 end
+            failures, mark = failures + 1, now
+            local limit = opts.maxFailures or 3
+            assert(failures <= limit, opts.label .. " gagal " .. limit .. "x tanpa kemajuan: " .. tostring(problem))
+            if left then App.rejoins[key] = (App.rejoins[key] or 0) + 1
+            else App.retries[key] = (App.retries[key] or 0) + 1 end
+            App.lastRetryError = os.date("%H:%M:%S") .. " " .. opts.label .. ": " .. tostring(problem)
+            G.setStatus((left and "Keluar dari world" or "Error") .. " (" .. tostring(problem) .. "). "
+                .. opts.label .. " diulang (" .. failures .. "/" .. limit .. ")...")
+            resume = opts.onRetry and opts.onRetry(problem, left) or { retry = true }
+            if opts.wait then
+                Movement.releaseControls()
+                Net.pause(opts.wait, token)
+                Movement.takeControls()
+            end
+        end
     end
 
     -- Samakan posisi toggle On/Off di UI dengan job yang benar-benar jalan.
@@ -2692,20 +2848,6 @@ return function(G)
         App.scanReport = lines
         App.scanTrees = trees
         return lines
-    end
-
-    -- onScan dipanggil setelah scan berhasil (dipakai tab Harvest untuk mengisi pilihan tanaman).
-    function Scan.buildTab(tab, onScan)
-        local UI = G.UI
-        tab:Paragraph({ Title = "World Scan", Desc = "Scan world yang sedang lo masuki: pohon (mateng/tumbuh), item floating, blok, dan isi Display Box. Dibaca dari memori game, tanpa request ke server." })
-        local result = tab:Paragraph({ Title = "Hasil scan", Desc = "Belum di-scan." })
-        tab:Button({ Title = "Scan world", Callback = function()
-            local ok, lines = pcall(Scan.run)
-            local text = ok and table.concat(lines, "\n") or ("Scan gagal: " .. tostring(lines))
-            UI.paragraph(result, "Hasil scan", text)
-            G.setStatus(ok and "World Scan selesai." or text)
-            if ok and onScan then pcall(onScan) end
-        end })
     end
 
     return Scan
@@ -3524,7 +3666,7 @@ end)()
 -- ===== src/pnb.lua =====
 __modules["pnb"] = (function(...)
 -- pnb.lua: Place & Break dengan grid 5x5 (layout terinspirasi Crusader), stock & seed lewat Display Box,
--- dan perekam aksi game untuk menemukan cara drop seed.
+-- dan Auto Collect.
 -- placeTile/breakTile/settleTile diadaptasi dari Clarissv main.lua v0.1.43; bedanya grid bisa
 -- sampai 24 tile di sekitar karakter, dan tile yang terisi blok lain dilewati, bukan error.
 return function(G)
@@ -3695,7 +3837,7 @@ return function(G)
     function Pnb.autoCollectTick()
         local options = App.config and App.config.options
         if not (App.alive and options and options.autoCollect) or App.job or App.pending > 0
-            or App.configuring or App.recording or App.autoCollectHold or App.teleporting then return false end
+            or App.configuring or App.autoCollectHold or App.teleporting then return false end
         if os.clock() > autoReset then autoAttempts, autoReset = {}, os.clock() + 15 end
         local okRuntime, r = pcall(Bridge.runtime)
         if not okRuntime or type(r) ~= "table" or not r.world or not r.inventory then return false end
@@ -3730,29 +3872,13 @@ return function(G)
     -- Adaptasi Clarissv v0.1.43: savePNBResume, refreshPNBCheckpoint, classifyPNBFault, recoverPNB.
     -- Setting "Rejoin world and return to PNB" (options.autoRejoin): kalau terlempar ke world picker,
     -- avatar mati/respawn, atau pindah server, masuk lagi ke world PNB lalu jalan balik ke spot.
-    local lastResumeSave = -math.huge
-    function Pnb.saveResume()
-        State.saveCheckpoint("pnb", { anchor = App.config.points.pnb })
-        lastResumeSave = os.clock()
-    end
-    function Pnb.clearResume() State.clearCheckpoint("pnb") end
-    -- Diperbarui tiap 2 menit supaya checkpoint tidak dianggap basi saat PNB jalan lama.
-    local function refreshResume()
-        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastResumeSave >= 120 then
-            local ok, issue = pcall(Pnb.saveResume)
-            if not ok then App.pnbResumeError = tostring(issue) end
-        end
-    end
-
-    function Pnb.classifyFault(problem, token)
-        return Movement.classifyFault(problem, token, App.config.points.pnb.world)
-    end
+    local resumePoint = G.Jobs.checkpointer("pnb", function() return { anchor = App.config.points.pnb } end)
+    Pnb.saveResume, Pnb.clearResume = resumePoint.save, resumePoint.clear
 
     -- Masuk lagi ke world PNB (lewat world picker, bisa pindah server) lalu jalan ke spot.
     function Pnb.returnToSpot(token)
         local anchor = App.config.points.pnb
         App.recovering = true
-        App.pnbRejoins = (App.pnbRejoins or 0) + 1
         G.setStatus("Masuk lagi ke " .. anchor.world .. "...")
         Movement.enterWorld(anchor.world, token, { save = Pnb.saveResume, label = "Place & Break",
             resumeButton = "Place & Break" })
@@ -3779,7 +3905,7 @@ return function(G)
         while true do
             checkpoint(token)
             worldCheck(anchor.world, token)
-            refreshResume()
+            resumePoint.refresh()
             holdAnchor(anchor, token)
             refreshInventory(token)
             if seedId and App.config.pnb.autoDrop and count(seedId) >= App.config.options.seedThreshold then
@@ -3824,163 +3950,27 @@ return function(G)
             if saved and saved.anchor then App.config.points.pnb = saved.anchor
             else App.config.points.pnb = Pnb.standingTile() end
         end,
-        -- Sama seperti Clarissv: error "recoverable" + setting Rejoin nyala = masuk lagi ke world,
-        -- balik ke spot, lanjut PNB. Pemulihan yang terganggu 3x berturut-turut = berhenti.
+        -- Sama seperti Clarissv: keluar world / avatar mati + setting Rejoin nyala = masuk lagi ke
+        -- world, balik ke spot, lanjut PNB (Jobs.resilient). Gagal 3x tanpa kemajuan = berhenti.
         run = function(token, saved)
-            local anchor = App.config.points.pnb
-            if saved then
-                local r = Bridge.runtime()
-                if r.world.name ~= anchor.world or Bridge.pickerOpen(r) then Pnb.returnToSpot(token) end
-            end
-            while true do
-                local completed, problem = pcall(Pnb.run, token)
-                if completed then break end
-                checkpoint(token)
-                problem = Pnb.classifyFault(problem, token)
-                if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
-                    error(problem, 0)
-                end
-                local interruptions = 0
-                while true do
-                    local recovered, nextProblem = pcall(Pnb.returnToSpot, token)
-                    if recovered then break end
-                    checkpoint(token)
-                    if type(nextProblem) ~= "table" or not nextProblem.recoverable then error(nextProblem, 0) end
-                    interruptions = interruptions + 1
-                    assert(interruptions < 3, "Pemulihan terganggu 3x. Cek world tersimpan dan koneksi.")
-                end
-            end
+            G.Jobs.resilient(token, saved, {
+                label = "Place & Break",
+                world = function() return App.config.points.pnb.world end,
+                progress = function() return App.stats.broken end,
+                loop = function(loopToken, resume)
+                    local anchor, r = App.config.points.pnb, Bridge.runtime()
+                    if resume and (r.world.name ~= anchor.world or Bridge.pickerOpen(r) or resume.retry) then
+                        Pnb.returnToSpot(loopToken)
+                    end
+                    Pnb.run(loopToken)
+                end,
+            })
             Pnb.clearResume()
         end,
         clear = function() Pnb.clearResume() end,
+        resume = true, -- lanjut otomatis setelah pindah server
+        validResume = function(data) return type(data.anchor) == "table" end,
     })
-    -- Auto-resume setelah pindah server (loader dijalankan ulang lewat queue_on_teleport).
-    table.insert(G.resumeHandlers, function()
-        local record = State.loadCheckpoint("pnb")
-        if not record or type(record.data) ~= "table" or type(record.data.anchor) ~= "table" then return false end
-        App.config, App.profile = record.config, Core.profileName(record.profile)
-        G.Jobs.start("pnb", record.data)
-        return true
-    end)
-
-    ---------------------------------------------------------------- perekam aksi game
-    -- Bungkus sementara semua fungsi milik world dan touch controls, lalu catat setiap panggilan
-    -- (nama + argumen) selama `seconds` detik. Dipakai untuk mencari perintah drop item.
-    -- Fungsi yang dipanggil tiap frame tidak dibungkus sama sekali (hemat & tidak bikin lag).
-    local NOISY = { dir = true, jumping = true, dropList = true, backpackNow = true, state = true }
-    local function describe(value)
-        local kind = type(value)
-        if kind == "number" then
-            if value == math.floor(value) and math.abs(value) < 2^53 then return string.format("%d", value) end
-            return string.format("%.2f", value)
-        end
-        if kind == "boolean" then return tostring(value) end
-        if kind == "string" then return string.format("%q", #value > 24 and value:sub(1, 24) .. "..." or value) end
-        if kind == "table" then
-            local n = 0
-            pcall(function() for _ in next, value do n = n + 1 end end)
-            return "table(" .. n .. ")"
-        end
-        return kind
-    end
-    function Pnb.record(seconds)
-        Net.idle()
-        local r = Bridge.runtime()
-        local order, counts, byName, wrapped, started = {}, {}, {}, {}, os.clock()
-        local function wrap(owner, label)
-            if type(owner) ~= "table" then return end
-            for key, fn in next, owner do
-                if type(fn) == "function" and not NOISY[key] then
-                    local original, name = fn, label .. "." .. tostring(key)
-                    local wrapper = function(...)
-                        byName[name] = (byName[name] or 0) + 1
-                        local args = table.pack(...)
-                        local parts = {}
-                        for i = 1, math.min(args.n, 8) do parts[i] = describe(args[i]) end
-                        local signature = name .. "(" .. table.concat(parts, ", ") .. ")"
-                        if not counts[signature] then
-                            if #order >= 3000 then return original(...) end
-                            table.insert(order, { signature = signature, name = name, at = os.clock() - started })
-                            counts[signature] = 0
-                        end
-                        counts[signature] = counts[signature] + 1
-                        return original(...)
-                    end
-                    table.insert(wrapped, { owner = owner, key = key, original = original, wrapper = wrapper })
-                end
-            end
-        end
-        wrap(r.world, "world")
-        wrap(r.controls, "controls")
-        wrap(r.handlers, "handlers")
-        wrap(r.gemHud, "hud")
-        wrap(r.inventory, "inventory")
-        for _, item in ipairs(wrapped) do rawset(item.owner, item.key, item.wrapper) end
-        -- Lapis 2: sadap SEMUA kiriman ke server (FireServer/InvokeServer). Game menyimpan
-        -- fungsi lokal sendiri, jadi aksi seperti drop bisa lolos dari bungkus tabel di atas;
-        -- tapi apa pun yang dikirim ke server pasti lewat sini.
-        local X, remoteActive, remoteNote = G.exec, true, "tidak tersedia di executor ini"
-        if type(X.hookmetamethod) == "function" and type(X.getnamecallmethod) == "function" and X.game then
-            local old
-            local function note(remote, method, ...)
-                local first = ...
-                local name = "remote " .. tostring(remote) .. ":" .. method
-                    .. (type(first) == "string" and (" " .. first) or "")
-                byName[name] = (byName[name] or 0) + 1
-                local args = table.pack(...)
-                local parts = {}
-                for i = 1, math.min(args.n, 8) do parts[i] = describe(args[i]) end
-                local signature = name .. "(" .. table.concat(parts, ", ") .. ")"
-                if not counts[signature] then
-                    if #order >= 3000 then return end
-                    table.insert(order, { signature = signature, name = name, at = os.clock() - started, remote = true })
-                    counts[signature] = 0
-                end
-                counts[signature] = counts[signature] + 1
-            end
-            local hook = function(self, ...)
-                if remoteActive then
-                    local method = X.getnamecallmethod()
-                    if (method == "FireServer" or method == "InvokeServer")
-                        and not (X.checkcaller and X.checkcaller()) then
-                        pcall(note, self, method, ...)
-                    end
-                end
-                return old(self, ...)
-            end
-            local ok, result = pcall(X.hookmetamethod, X.game, "__namecall", X.newcclosure and X.newcclosure(hook) or hook)
-            if ok and type(result) == "function" then old, remoteNote = result, "aktif" else remoteNote = "gagal: " .. tostring(result) end
-        end
-        App.recording = true
-        App.recordReport = { "Rekaman berjalan... tunggu status 'Rekaman selesai'." }
-        G.setStatus("Merekam " .. seconds .. " detik. Drop seed secara MANUAL sekarang. Copy diagnostics SETELAH status 'Rekaman selesai'.")
-        task.delay(seconds, function()
-            for _, item in ipairs(wrapped) do
-                if rawget(item.owner, item.key) == item.wrapper then rawset(item.owner, item.key, item.original) end
-            end
-            App.recording = false
-            remoteActive = false -- hook tetap terpasang tapi cuma meneruskan (aman)
-            -- Yang ditampilkan: semua world.call, lalu panggilan JARANG (<= 3x) = aksi manual.
-            -- Fungsi yang dipanggil ribuan kali (per frame) cuma diringkas jumlahnya.
-            local report = { "Sadap server: " .. remoteNote }
-            for _, entry in ipairs(order) do
-                if entry.name == "world.call" or (counts[entry.signature] <= 3 and byName[entry.name] <= 30) then
-                    if #report < 40 then
-                        table.insert(report, string.format("%.1fs  %s x%d", entry.at, entry.signature, counts[entry.signature]))
-                    end
-                end
-            end
-            if #report == 1 then table.insert(report, "Tidak ada panggilan jarang. Drop seed belum tercatat; coba lagi.") end
-            local busy = {}
-            for name, n in pairs(byName) do if n > 30 then table.insert(busy, { name = name, n = n }) end end
-            table.sort(busy, function(a, b) return a.n > b.n end)
-            local parts = {}
-            for i = 1, math.min(8, #busy) do parts[i] = busy[i].name .. " " .. busy[i].n end
-            if #parts > 0 then table.insert(report, "Sering (diabaikan): " .. table.concat(parts, ", ")) end
-            App.recordReport = report
-            G.setStatus("Rekaman selesai. Copy diagnostics di Settings dan kirim.")
-        end)
-    end
 
     ---------------------------------------------------------------- tab Place & Break
     local function tileSet()
@@ -4170,9 +4160,10 @@ end)()
 __modules["harvest"] = (function(...)
 -- harvest.lua: panen pohon dengan Fist, diadaptasi dari Clarissv main.lua v0.1.43
 -- (runTreeHarvest mode Fist, runHarvest, makeHarvestPlanter). Aturan Hansel:
---   1) World Scan dulu; 2) yang dipanen cuma pohon yang SUDAH mateng (Clarissv menunggu semua);
+--   0) multi world seperti Planting; tanaman & Display Box dideteksi otomatis per world;
+--   1) scan dulu; 2) yang dipanen cuma pohon yang SUDAH mateng (Clarissv menunggu semua);
 --   3) pukul pohon sambil collect: pickup bawaan game tetap nyala saat jalan, dan sisa drop
---      tiap baris dipungut sebelum pindah baris; 4) hasil disimpan ke Display Box farm;
+--      tiap baris dipungut sebelum pindah baris; 4) hasil (blok + seed) disimpan ke Display Box world itu;
 --   5) opsional Replant during harvest: tile yang baru dipanen langsung ditanam lagi.
 return function(G)
     local App, Core, Bridge, Net, Actions, Movement, Drops, Storage, Scan =
@@ -4276,74 +4267,113 @@ return function(G)
         return true
     end
 
-    ---------------------------------------------------------------- keluar world & resume
-    -- Setting "Rejoin world and return to PNB & Harvest": checkpoint harvest disimpan saat mulai
-    -- dan tiap 2 menit, supaya setelah pindah server script dimuat ulang dan Harvest lanjut.
-    local lastSave = -math.huge
-    function Harvest.saveResume()
-        G.State.saveCheckpoint("harvest", { world = App.config.points.farmBox.world })
-        lastSave = os.clock()
-    end
-    function Harvest.clearResume() G.State.clearCheckpoint("harvest") end
-    local function refreshResume()
-        if App.config.options.autoRejoin and App.pending == 0 and os.clock() - lastSave >= 120 then
-            local ok, issue = pcall(Harvest.saveResume)
-            if not ok then App.harvestResumeError = tostring(issue) end
+    ---------------------------------------------------------------- deteksi otomatis
+    -- Tanaman di world = jenis seed yang paling banyak ditanam (pohon) di world itu.
+    function Harvest.detectCrop(r)
+        local counts = {}
+        for y = 0, r.world.h - 1 do
+            local row = r.world.fg[y]
+            for x = 0, r.world.w - 1 do
+                local id = row and row[x]
+                local item = id and r.items[id]
+                if item and item.kind == "seed" then counts[id] = (counts[id] or 0) + 1 end
+            end
         end
+        local best, most = nil, 0
+        for id, n in pairs(counts) do if n > most or (n == most and id < best) then best, most = id, n end end
+        return best, most
+    end
+
+    -- Masuk world, deteksi tanaman + blok hasilnya + Display Box untuk menyimpan (blok & seed).
+    -- Dipakai Harvest dan Rotation. Return: { r, seedId, blockId, box } atau nil + alasan.
+    function Harvest.setupWorld(name, token, label, save)
+        local r = Bridge.runtime()
+        if r.world.name ~= name or Bridge.pickerOpen(r) then
+            G.setStatus(label .. ": masuk " .. name .. "...")
+            Movement.enterWorld(name, token, { label = label, resumeButton = label, save = save })
+        end
+        r = worldCheck(name, token)
+        G.setStatus(label .. ": scan " .. name .. "...")
+        local seedId, trees = Harvest.detectCrop(r)
+        if not seedId then return nil, "tidak ada pohon" end
+        local blockId = Core.blockForSeed(r.items, seedId)
+        local found, box = pcall(Storage.findBox, { blockId, seedId })
+        if not found then return nil, tostring(box) end
+        pcall(Scan.run) -- laporan scan lengkap ikut ke diagnostics
+        return { r = r, seedId = seedId, blockId = blockId, box = box, trees = trees }
     end
 
     Harvest.store, Harvest.replant, Harvest.harvestTree, Harvest.duration = store, replant, harvestTree, duration
 
-    function Harvest.run(token)
-        local box, seedId = App.config.points.farmBox, App.config.harvesting.seedId
-        local r = Bridge.runtime()
-        if r.world.name ~= box.world or Bridge.pickerOpen(r) then
-            G.setStatus("Masuk ke world farm " .. box.world .. "...")
-            Movement.enterWorld(box.world, token, { label = "Harvest", resumeButton = "Harvest",
-                save = App.config.options.autoRejoin and Harvest.saveResume or nil })
+    ---------------------------------------------------------------- panen satu world
+    function Harvest.runWorld(index, token, save)
+        local name = App.config.harvesting.worlds[index]
+        App.harvestIndex = index
+        save()
+        local setup, why = Harvest.setupWorld(name, token, "Harvest", save)
+        App.harvestWorlds = App.harvestWorlds or {}
+        if not setup then
+            App.harvestWorlds[name] = "dilewati: " .. why
+            return 0
         end
-        r = worldCheck(box.world, token)
-        local blockId = Core.blockForSeed(r.items, seedId)
-        Storage.count(box, blockId, seedId) -- tolak box yang berisi item lain sebelum mulai
-        assert(type(r.handlers.hit) == "function", "Hook pukul (hit) tidak tersedia. Copy diagnostics.")
+        local r, seedId, blockId, box = setup.r, setup.seedId, setup.blockId, setup.box
         local replantOn = App.config.harvesting.replant
-        G.setStatus("Scan pohon di " .. box.world .. "...")
         local plan = Harvest.plan(r, seedId)
-        App.harvestPlan = string.format("%s: %d mateng, %d tumbuh%s", box.world, plan.ripe, plan.growing,
-            plan.growing > 0 and (", semua mateng dalam " .. duration(plan.longest)) or "")
+        local summary = string.format("%s, %d mateng, %d tumbuh%s, box %d,%d", r.items[seedId].name, plan.ripe, plan.growing,
+            plan.growing > 0 and (" (semua mateng dalam " .. duration(plan.longest) .. ")") or "", box.x, box.y)
+        App.harvestPlan = name .. ": " .. summary
         if plan.ripe == 0 then
-            G.setStatus("Belum ada pohon mateng di " .. box.world .. ". " .. App.harvestPlan .. ".")
-            return
+            App.harvestWorlds[name] = "belum ada yang mateng; " .. summary
+            return 0
         end
         local ids = { blockId, seedId, Drops.GEM }
         local trees, replanted = 0, 0
         for _, entry in ipairs(plan.rows) do
             local row = entry.row
-            G.setStatus(string.format("Panen baris %d: %d pohon mateng...", row.y, #entry.points))
+            G.setStatus(string.format("Harvest %s (%d/%d): baris %d, %d pohon mateng...", name, index,
+                #App.config.harvesting.worlds, row.y, #entry.points))
             for _, point in ipairs(entry.points) do
                 checkpoint(token)
-                refreshResume()
-                -- Tas hampir penuh: simpan dulu ke box farm, lalu lanjut dari pohon ini.
+                -- Tas hampir penuh: simpan dulu ke box world ini, lalu lanjut dari pohon ini.
                 if r.inventory:room(blockId) < 10 or r.inventory:room(seedId) < 10 then
-                    store(blockId, seedId, replantOn and math.min(count(seedId), 100) or 0, token)
+                    store(blockId, seedId, replantOn and math.min(count(seedId), 100) or 0, token, box)
                 end
                 if harvestTree(r, point, seedId, plan.resolver, token) then
                     trees = trees + 1
                     -- Pukul sambil collect: pungut hasil pohon ini dari tempat berdiri sebelum lanjut.
-                    Drops.collectNear({ world = box.world, x = point.x, y = point.y }, ids, token, Drops.REACH)
+                    Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.reach())
                     if replantOn and replant(r, point, seedId, token) then replanted = replanted + 1 end
                 end
             end
             -- Sisa drop di baris ini (yang tidak terambil otomatis saat jalan) dipungut sekarang.
             local mid = math.floor((row.left + row.right) / 2)
-            Drops.collectArea({ world = box.world, x = mid, y = row.y }, ids, token,
+            Drops.collectArea({ world = name, x = mid, y = row.y }, ids, token,
                 { radius = (row.right - row.left) / 2 + 1.5, up = 1.5, down = 1.25 })
         end
-        store(blockId, seedId, 0, token)
-        App.harvestPlan = App.harvestPlan .. string.format("; dipanen %d, ditanam ulang %d", trees, replanted)
-        G.setStatus(string.format("Selesai: %d pohon dipanen%s. %s", trees,
-            replantOn and (", " .. replanted .. " ditanam ulang") or "",
-            plan.growing > 0 and (plan.growing .. " pohon masih tumbuh, mateng dalam " .. duration(plan.longest) .. ".") or "Semua pohon sudah dipanen."))
+        store(blockId, seedId, 0, token, box)
+        App.harvestWorlds[name] = string.format("dipanen %d, ditanam ulang %d; %s", trees, replanted, summary)
+        return trees
+    end
+
+    ---------------------------------------------------------------- job
+    local resumePoint = G.Jobs.checkpointer("harvest", function() return { worldIndex = App.harvestIndex or 1 } end)
+    Harvest.saveResume, Harvest.clearResume = resumePoint.save, resumePoint.clear
+
+    -- Semua world di list, satu kali jalan. Per world: masuk, deteksi tanaman & Display Box,
+    -- panen pohon mateng, simpan blok + seed ke box world itu.
+    function Harvest.run(token, saved)
+        local worlds = App.config.harvesting.worlds
+        local start = saved and saved.worldIndex or 1
+        if start > #worlds then start = 1 end
+        local total = 0
+        for index = start, #worlds do
+            checkpoint(token)
+            total = total + Harvest.runWorld(index, token, resumePoint.save)
+        end
+        local parts = {}
+        for _, name in ipairs(worlds) do table.insert(parts, name .. ": " .. tostring(App.harvestWorlds[name] or "-")) end
+        App.harvestPlan = table.concat(parts, " | ")
+        G.setStatus(string.format("Selesai: %d pohon dipanen di %d world.", total, #worlds))
     end
 
     G.Jobs.register("harvest", {
@@ -4352,104 +4382,54 @@ return function(G)
             assert(r.body and r.controls and r.handlers and type(r.handlers.hit) == "function",
                 "Hook pukul/gerak tidak tersedia. Copy diagnostics dari Settings.")
         end,
-        -- Keluar world / avatar mati + setting Rejoin nyala: masuk lagi ke world farm, scan ulang,
-        -- lanjut panen (aman: pohon yang sudah dipanen tidak terhitung lagi). Gagal 3x berturut-turut
-        -- tanpa ada pohon yang berhasil dipanen di antaranya = berhenti.
-        run = function(token)
-            if App.config.options.autoRejoin then Harvest.saveResume(); Movement.queueResume() end
-            local failures, treesAtFailure = 0, nil
-            while true do
-                local completed, problem = pcall(Harvest.run, token)
-                if completed then break end
-                checkpoint(token)
-                problem = Movement.classifyFault(problem, token, App.config.points.farmBox.world)
-                if not (type(problem) == "table" and problem.recoverable and App.config.options.autoRejoin) then
-                    error(problem, 0)
-                end
-                local trees = App.stats.trees or 0
-                if treesAtFailure ~= trees then failures = 0 end
-                failures, treesAtFailure = failures + 1, trees
-                assert(failures <= 3, "Harvest terganggu 3x tanpa kemajuan: " .. tostring(problem))
-                App.harvestRejoins = (App.harvestRejoins or 0) + 1
-                G.setStatus("Keluar dari world (" .. tostring(problem) .. "). Masuk lagi ke world farm dan lanjut harvest...")
-            end
+        -- Keluar world / avatar mati + setting Rejoin nyala: masuk lagi ke world yang sedang dipanen,
+        -- scan ulang, lanjut (pohon yang sudah dipanen tidak terhitung lagi). Gagal 3x tanpa kemajuan = berhenti.
+        run = function(token, saved)
+            if App.config.options.autoRejoin then Movement.queueResume() end
+            G.Jobs.resilient(token, saved, {
+                label = "Harvest",
+                world = function() return App.config.harvesting.worlds[App.harvestIndex or 1] end,
+                progress = function() return App.stats.trees or 0 end,
+                loop = Harvest.run,
+                onRetry = function() return { worldIndex = App.harvestIndex or 1 } end,
+            })
             Harvest.clearResume()
         end,
         clear = function() Harvest.clearResume() end,
+        resume = true,
+        validResume = function(data) return type(data.worldIndex) == "number" end,
     })
-    -- Auto-resume setelah pindah server (loader dijalankan ulang lewat queue_on_teleport).
-    table.insert(G.resumeHandlers, function()
-        local record = G.State.loadCheckpoint("harvest")
-        if not record or type(record.data) ~= "table" then return false end
-        App.config, App.profile = record.config, Core.profileName(record.profile)
-        G.Jobs.start("harvest", record.data)
-        return true
-    end)
 
     ---------------------------------------------------------------- tab Harvest
     function Harvest.buildTab(tab)
         local UI, State = G.UI, G.State
-        local controls, lookup, syncing = {}, {}, true
+        local controls, syncing = {}, true
         UI.addStatus(tab:Paragraph({ Title = "Status", Desc = App.status }))
-
-        local function choices()
-            local values, selected = {}, nil
-            lookup = {}
-            local r = App.runtime
-            for id, info in pairs(App.scanTrees or {}) do
-                local name = (r and r.items[id] and r.items[id].name or "Seed") .. " (" .. id .. ")"
-                local label = string.format("%s - %d mateng / %d pohon", name, info.ripe, info.total)
-                table.insert(values, label)
-                lookup[label] = id
-                if id == App.config.harvesting.seedId then selected = label end
-            end
-            table.sort(values)
-            return values, selected
-        end
-        local function refreshChoices()
-            local values, selected = choices()
-            pcall(function() controls.crop:Refresh(values) end)
-            if selected then pcall(function() controls.crop:Select(selected) end) end
+        local function setOption(fn)
+            if syncing then return end
+            local ok, message = pcall(function() Net.idle(); fn(); State.saveSession() end)
+            if not ok then G.notify(tostring(message)) end
         end
         function Harvest.refreshTab()
-            UI.paragraph(controls.box, "Display Box farm", Storage.pointText(App.config.points.farmBox))
-            UI.paragraph(controls.plan, "Rencana panen", App.harvestPlan or "Scan world dulu.")
+            local lines = {}
+            for i, name in ipairs(App.config.harvesting.worlds) do
+                table.insert(lines, i .. ". " .. name .. (App.harvestWorlds and App.harvestWorlds[name] and (": " .. App.harvestWorlds[name]) or ""))
+            end
+            UI.paragraph(controls.list, "World harvest", #lines > 0 and table.concat(lines, "\n") or "Belum ada world.")
         end
-
-        Scan.buildTab(tab, function() refreshChoices(); Harvest.refreshTab() end)
-        pcall(function() tab:Section({ Title = "Harvest (Fist)" }) end)
-        controls.crop = tab:Dropdown({ Title = "Tanaman yang dipanen", Desc = "Muncul setelah Scan world.", Values = {},
+        tab:Paragraph({ Title = "Cara kerja", Desc = "Per world di list: masuk, scan otomatis (tanaman = seed yang paling banyak ditanam), panen pohon yang sudah mateng, simpan blok + seed ke Display Box di world itu (dicari otomatis: box kosong atau berisi blok/seed tanaman itu)." })
+        tab:Input({ Title = "World harvest (urut)", Value = table.concat(App.config.harvesting.worlds, ", "),
+            Placeholder = "FARM1, FARM2", Desc = "Pisahkan dengan koma.",
             Callback = function(value)
-                if syncing then return end
-                if type(value) == "table" then value = value[1] end
-                local ok, message = pcall(function()
-                    Net.idle()
-                    App.config.harvesting.seedId = assert(lookup[value], "Pilih tanaman.")
-                    State.saveSession()
-                end)
-                if not ok then G.notify(tostring(message)) end
-            end })
-        controls.box = tab:Paragraph({ Title = "Display Box farm", Desc = "Belum diset" })
-        tab:Button({ Title = "Set farm Display Box here", Desc = "Berdiri di samping Display Box di world farm. Hasil panen disimpan di sini.",
-            Callback = UI.action(function()
-                local box = Storage.captureNearby("farmBox", "box")
+                setOption(function() App.config.harvesting.worlds = Core.parseWorlds(value or "") end)
                 Harvest.refreshTab()
-                G.setStatus("Display Box farm disimpan: " .. box.world .. " tile " .. box.x .. ", " .. box.y .. ".")
-            end) })
-        controls.replant = tab:Toggle({ Title = "Replant during harvest", Value = App.config.harvesting.replant,
-            Desc = "Tile yang baru dipanen langsung ditanam lagi pakai seed di tas (termasuk seed hasil panen). Seed habis = panen tetap lanjut.",
-            Callback = function(value)
-                if syncing then return end
-                local ok, message = pcall(function()
-                    Net.idle()
-                    App.config.harvesting.replant = value == true
-                    State.saveSession()
-                end)
-                if not ok then G.notify(tostring(message)) end
             end })
-        controls.plan = tab:Paragraph({ Title = "Rencana panen", Desc = "Scan world dulu." })
+        tab:Toggle({ Title = "Replant during harvest", Value = App.config.harvesting.replant,
+            Desc = "Tile yang baru dipanen langsung ditanam lagi pakai seed di tas (termasuk seed hasil panen).",
+            Callback = function(value) setOption(function() App.config.harvesting.replant = value == true end) end })
+        controls.list = tab:Paragraph({ Title = "World harvest", Desc = "Belum ada world." })
         G.Jobs.toggles.harvest = tab:Toggle({ Title = "Harvest", Value = false,
-            Desc = "Scan, panen pohon yang sudah mateng (zigzag dari atas), pungut hasil, simpan ke Display Box farm.",
+            Desc = "Panen semua world di list satu kali jalan.",
             Callback = function(enabled) G.Jobs.setRunning("harvest", enabled) end })
         syncing = false
         Harvest.refreshTab()
@@ -4485,18 +4465,9 @@ return function(G)
     local SEED_KEEP = 100 -- seed yang disisakan di tas saat simpan di tengah putaran (buat replant)
 
     ---------------------------------------------------------------- checkpoint / resume
-    local lastSave = -math.huge
-    function Rotation.saveResume()
-        State.saveCheckpoint("rotation", { worldIndex = App.rotationIndex or 1 })
-        lastSave = os.clock()
-    end
-    function Rotation.clearResume() State.clearCheckpoint("rotation") end
-    local function refreshResume()
-        if App.pending == 0 and os.clock() - lastSave >= 120 then
-            local ok, issue = pcall(Rotation.saveResume)
-            if not ok then App.rotationResumeError = tostring(issue) end
-        end
-    end
+    local resumePoint = G.Jobs.checkpointer("rotation", function() return { worldIndex = App.rotationIndex or 1 } end)
+    Rotation.saveResume, Rotation.clearResume = resumePoint.save, resumePoint.clear
+    local refreshResume = resumePoint.refresh
 
     local function info(text)
         App.rotationInfo = text
@@ -4592,7 +4563,7 @@ return function(G)
             if tileAt(side.x, side.y) == blockId then
                 soft(token, r.world.name, function() Pnb.breakTile(here, side, blockId, token) end)
             end
-            soft(token, r.world.name, function() Drops.collectNear(here, ids, token, Drops.REACH) end)
+            soft(token, r.world.name, function() Drops.collectNear(here, ids, token, Drops.reach()) end)
             local inside = tileAt(side.x, side.y)
             assert(inside == 0 or inside == blockId or inside == seedId,
                 "Tile PNB rotasi terisi item lain di " .. side.x .. ", " .. side.y .. ".")
@@ -4647,19 +4618,17 @@ return function(G)
     -- Return: jumlah pohon dipanen di world ini, dan detik sampai pohon tercepat berikutnya mateng.
     function Rotation.runWorld(index, token)
         local cfg = App.config.rotation
-        local name, seedId, target = cfg.worlds[index], cfg.seedId, cfg.blockTarget
-        local box = cfg.boxes[name]
+        local name, target = cfg.worlds[index], cfg.blockTarget
         App.rotationIndex = index
         Rotation.saveResume()
-        local r = Bridge.runtime()
-        if r.world.name ~= name or Bridge.pickerOpen(r) then
-            info(string.format("Rotasi world %d/%d: masuk %s...", index, #cfg.worlds, name))
-            Movement.enterWorld(name, token, { label = "Rotation", resumeButton = "Rotation",
-                save = Rotation.saveResume })
+        -- Masuk + scan otomatis: tanaman = seed terbanyak di world, Display Box dicari otomatis.
+        local setup, why = Harvest.setupWorld(name, token, string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume)
+        App.rotationWorlds = App.rotationWorlds or {}
+        if not setup then
+            App.rotationWorlds[name] = "dilewati: " .. why
+            return 0, nil
         end
-        r = worldCheck(name, token)
-        local blockId = Core.blockForSeed(r.items, seedId)
-        G.Storage.count(box, blockId, seedId) -- box harus kosong / berisi blok & seed tanaman ini saja
+        local r, seedId, blockId, box = setup.r, setup.seedId, setup.blockId, setup.box
         local ids = { blockId, seedId, Drops.GEM }
         local total, pending, plan = 0, {}, nil
         local stats = { harvested = 0, pnb = 0, replanted = 0 }
@@ -4694,7 +4663,7 @@ return function(G)
                         end)
                         if ok and got then
                             soft(token, name, function()
-                                Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.REACH)
+                                Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.reach())
                             end)
                             table.insert(harvested, point)
                             stats.harvested = stats.harvested + 1
@@ -4792,39 +4761,23 @@ return function(G)
                 and type(r.handlers.setTile) == "function" and type(r.handlers.plantSeed) == "function",
                 "Hook pukul/place/tanam tidak tersedia. Copy diagnostics dari Settings.")
         end,
-        -- Error di tengah jalan TIDAK langsung menghentikan rotasi:
+        -- Error di tengah jalan TIDAK langsung menghentikan rotasi (Jobs.resilient, anyError):
         --   keluar world / avatar mati (+ setting Rejoin) -> masuk lagi ke world itu, lanjut dari scan;
-        --   error lain (pukul gagal, jalan timeout, request box gagal, dll.) -> tunggu 3 detik, ulangi
-        --   world itu dari scan. Berhenti kalau gagal 5x berturut-turut tanpa kemajuan sama sekali.
+        --   error lain (jalan timeout, request box gagal, dll.) -> tunggu 3 detik, ulangi world itu dari
+        --   scan. Berhenti kalau gagal 5x berturut-turut tanpa kemajuan sama sekali.
         run = function(token, saved)
             if App.config.options.autoRejoin then Movement.queueResume() end
-            local failures, mark = 0, nil
-            local resume = saved
-            while true do
-                local completed, problem = pcall(Rotation.run, token, resume)
-                if completed then break end
-                checkpoint(token)
-                local name = App.config.rotation.worlds[App.rotationIndex or 1]
-                problem = Movement.classifyFault(problem, token, name)
-                local left = type(problem) == "table" and problem.recoverable
-                if left and not App.config.options.autoRejoin then error(problem, 0) end
-                local now = (App.stats.trees or 0) + (App.stats.broken or 0) + (App.stats.replanted or 0)
-                if mark ~= now then failures = 0 end
-                failures, mark = failures + 1, now
-                App.rotationLastError = os.date("%H:%M:%S") .. " " .. tostring(problem)
-                assert(failures <= 5, "Rotation gagal 5x tanpa kemajuan: " .. tostring(problem)
-                    .. ". Tekan Resume rotation setelah dicek.")
-                if left then App.rotationRejoins = (App.rotationRejoins or 0) + 1
-                else App.rotationRetries = (App.rotationRetries or 0) + 1 end
-                resume = { worldIndex = App.rotationIndex or 1 }
-                info((left and "Keluar dari world" or "Error") .. " (" .. tostring(problem) .. "). Ulangi world ini ("
-                    .. failures .. "/5)...")
-                Movement.releaseControls()
-                pause(3, token)
-                Movement.takeControls()
-            end
+            G.Jobs.resilient(token, saved, {
+                label = "Rotation", anyError = true, maxFailures = 5, wait = 3,
+                world = function() return App.config.rotation.worlds[App.rotationIndex or 1] end,
+                progress = function() return (App.stats.trees or 0) + (App.stats.broken or 0) + (App.stats.replanted or 0) end,
+                loop = Rotation.run,
+                onRetry = function() return { worldIndex = App.rotationIndex or 1 } end,
+            })
         end,
         clear = function() Rotation.clearResume() end,
+        resume = true,
+        validResume = function(data) return type(data.worldIndex) == "number" end,
     })
     -- Lanjut rotasi dari checkpoint (world terakhir yang dikerjakan). Dipakai tombol "Resume rotation"
     -- setelah rotasi berhenti karena error, dan otomatis setelah pindah server.
@@ -4835,75 +4788,35 @@ return function(G)
         App.config, App.profile = record.config, Core.profileName(record.profile)
         G.Jobs.start("rotation", record.data)
     end
-    table.insert(G.resumeHandlers, 1, function()
-        local record = State.loadCheckpoint("rotation")
-        if not record or type(record.data) ~= "table" or type(record.data.worldIndex) ~= "number" then return false end
-        App.config, App.profile = record.config, Core.profileName(record.profile)
-        G.Jobs.start("rotation", record.data)
-        return true
-    end)
+
 
     ---------------------------------------------------------------- tab Rotation
     function Rotation.buildTab(tab)
-        local UI, Scan, Storage = G.UI, G.Scan, G.Storage
-        local controls, lookup, syncing = {}, {}, true
+        local UI = G.UI
+        local controls, syncing = {}, true
         UI.addStatus(tab:Paragraph({ Title = "Status", Desc = App.status }))
-        tab:Paragraph({ Title = "Cara kerja", Desc = "Per world di list: scan -> harvest pohon mateng sampai blok di tas = target -> PNB di 1 tile kosong di samping sampai blok habis -> replant tile yang dipanen -> ulangi sampai tidak ada pohon mateng -> simpan sisa ke Display Box world itu -> world berikutnya (muter)." })
+        tab:Paragraph({ Title = "Cara kerja", Desc = "Per world di list: masuk & scan otomatis (tanaman = seed terbanyak, Display Box dicari otomatis) -> harvest pohon mateng sampai blok di tas = target -> PNB 1 tile kosong di samping sampai blok habis -> replant (atas, bekas panen, sisa farm) -> ulangi sampai tidak ada pohon mateng -> simpan seed sisa ke box -> world berikutnya (muter)." })
         local function setOption(fn)
             if syncing then return end
             local ok, message = pcall(function() Net.idle(); fn(); State.saveSession() end)
             if not ok then G.notify(tostring(message)) end
         end
-        local function choices()
-            local values, selected = {}, nil
-            lookup = {}
-            local r = App.runtime
-            for id, tree in pairs(App.scanTrees or {}) do
-                local label = string.format("%s (%d) - %d mateng / %d pohon", r and r.items[id] and r.items[id].name or "Seed", id, tree.ripe, tree.total)
-                table.insert(values, label)
-                lookup[label] = id
-                if id == App.config.rotation.seedId then selected = label end
-            end
-            table.sort(values)
-            return values, selected
-        end
         function Rotation.refreshTab()
-            local cfg, lines = App.config.rotation, {}
-            for i, name in ipairs(cfg.worlds) do
-                local box = cfg.boxes[name]
-                table.insert(lines, string.format("%d. %s: %s%s", i, name, box and ("box " .. box.x .. ", " .. box.y) or "BELUM ADA BOX",
-                    App.rotationWorlds and App.rotationWorlds[name] and (" | " .. App.rotationWorlds[name]) or ""))
+            local lines = {}
+            for i, name in ipairs(App.config.rotation.worlds) do
+                table.insert(lines, i .. ". " .. name .. (App.rotationWorlds and App.rotationWorlds[name] and (": " .. App.rotationWorlds[name]) or ""))
             end
             UI.paragraph(controls.list, "World rotasi", #lines > 0 and table.concat(lines, "\n") or "Belum ada world.")
         end
-        Scan.buildTab(tab, function()
-            local values, selected = choices()
-            pcall(function() controls.crop:Refresh(values) end)
-            if selected then pcall(function() controls.crop:Select(selected) end) end
-        end)
-        pcall(function() tab:Section({ Title = "Rotation" }) end)
-        controls.worlds = tab:Input({ Title = "World farm rotasi (urut)", Value = table.concat(App.config.rotation.worlds, ", "),
-            Placeholder = "FARM1, FARM2, FARM3", Desc = "Terpisah dari list world Planting. Pisahkan dengan koma.",
+        tab:Input({ Title = "World farm rotasi (urut)", Value = table.concat(App.config.rotation.worlds, ", "),
+            Placeholder = "FARM1, FARM2, FARM3", Desc = "Terpisah dari list world Planting & Harvest. Pisahkan dengan koma.",
             Callback = function(value)
                 setOption(function() App.config.rotation.worlds = Core.parseWorlds(value or "") end)
                 Rotation.refreshTab()
             end })
-        controls.crop = tab:Dropdown({ Title = "Tanaman rotasi", Desc = "Muncul setelah Scan world.", Values = {},
-            Callback = function(value)
-                if type(value) == "table" then value = value[1] end
-                setOption(function() App.config.rotation.seedId = assert(lookup[value], "Pilih tanaman.") end)
-            end })
         tab:Slider({ Title = "Harvest sampai blok di tas", Step = 1,
             Value = { Min = 10, Max = 200, Default = App.config.rotation.blockTarget },
             Callback = function(value) setOption(function() App.config.rotation.blockTarget = math.floor(tonumber(value)) end) end })
-        tab:Button({ Title = "Set Display Box world ini", Desc = "Masuk tiap world di list, berdiri di samping Display Box-nya, tekan ini. Seed sisa & blok disimpan di sini.",
-            Callback = UI.action(function()
-                local box = Storage.captureNearby("rotationBox", "box")
-                App.config.points.rotationBox = nil
-                App.config.rotation.boxes[box.world] = box
-                Rotation.refreshTab()
-                G.setStatus("Display Box rotasi untuk " .. box.world .. " disimpan: tile " .. box.x .. ", " .. box.y .. ".")
-            end) })
         controls.list = tab:Paragraph({ Title = "World rotasi", Desc = "Belum ada world." })
         G.Jobs.toggles.rotation = tab:Toggle({ Title = "Rotation", Value = false,
             Desc = "Jalan terus sampai di-stop. Mulai dari world pertama di list.",
@@ -4973,9 +4886,6 @@ return function(modules, VERSION)
         getupvalue = getupvalue or (debug and debug.getupvalue),
         debugInfo = debug and debug.info, getinfo = getinfo or (debug and debug.getinfo),
         getrawmetatable = getrawmetatable, setclipboard = setclipboard or toclipboard,
-        -- Untuk perekam aksi: menyadap panggilan ke server (RemoteEvent/RemoteFunction).
-        hookmetamethod = hookmetamethod, getnamecallmethod = getnamecallmethod,
-        newcclosure = newcclosure, checkcaller = checkcaller, game = game,
         sharedTables = { { label = "executor shared", value = shared }, { label = "executor globals", value = env.shared } },
     }
     if type(getrenv) == "function" then
@@ -5060,17 +4970,29 @@ return function(modules, VERSION)
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
                 .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
                 .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),
-            "Rejoin & balik ke PNB/Harvest: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang PNB "
-                .. tostring(App.pnbRejoins or 0) .. "x, Harvest " .. tostring(App.harvestRejoins or 0) .. "x"
-                .. ((App.pnbResumeError or App.harvestResumeError) and ("; checkpoint error: " .. tostring(App.pnbResumeError or App.harvestResumeError)) or ""),
+            (function()
+                local function counts(map)
+                    local parts = {}
+                    for _, key in ipairs({ "Place & Break", "Harvest", "Rotation" }) do
+                        if map[key] then table.insert(parts, key .. " " .. map[key] .. "x") end
+                    end
+                    return #parts > 0 and table.concat(parts, ", ") or "0"
+                end
+                local errors = {}
+                for name, issue in pairs(App.resumeErrors or {}) do table.insert(errors, name .. ": " .. issue) end
+                return "Rejoin: " .. (App.config.options.autoRejoin and "on" or "off") .. "; masuk ulang " .. counts(App.rejoins or {})
+                    .. "; diulang karena error " .. counts(App.retries or {})
+                    .. (App.lastRetryError and ("; terakhir: " .. App.lastRetryError) or "")
+                    .. (#errors > 0 and ("; checkpoint error: " .. table.concat(errors, ", ")) or "")
+            end)(),
             "Planting recovery: " .. tostring(App.plantingRecovery or "-"),
             "Rotation: " .. tostring(App.rotationInfo or "-") .. " | world ke-" .. tostring(App.rotationIndex or "-")
-                .. ", putaran " .. tostring(App.rotationLaps or 0) .. ", masuk ulang " .. tostring(App.rotationRejoins or 0) .. "x"
-                .. ", ulang karena error " .. tostring(App.rotationRetries or 0) .. "x"
+                .. ", putaran " .. tostring(App.rotationLaps or 0)
                 .. ", error kecil dilewati " .. tostring(App.rotationSoftErrors or 0) .. "x"
-                .. (App.rotationLastError and ("; error terakhir: " .. App.rotationLastError) or ""),
-            "Harvest: " .. tostring(App.harvestPlan or "-") .. " | seed " .. tostring(App.config.harvesting.seedId)
-                .. ", replant " .. tostring(App.config.harvesting.replant) .. ", box " .. G.Storage.pointText(App.config.points.farmBox),
+                .. (App.rotationLastError and ("; error kecil terakhir: " .. App.rotationLastError) or ""),
+            "Harvest: " .. tostring(App.harvestPlan or "-") .. " | world ke-" .. tostring(App.harvestIndex or "-")
+                .. ", replant " .. tostring(App.config.harvesting.replant),
+            "Jangkauan pungut server: " .. G.Drops.reachText(),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
                 .. tostring(App.config and App.config.options.collectRange) .. ", " .. tostring(App.autoCollectInfo or "-"),
@@ -5082,10 +5004,6 @@ return function(modules, VERSION)
         if App.scanReport then
             table.insert(lines, "World Scan:")
             for _, line in ipairs(App.scanReport) do table.insert(lines, "  " .. line) end
-        end
-        if App.recordReport then
-            table.insert(lines, "Rekaman aksi game:")
-            for _, line in ipairs(App.recordReport) do table.insert(lines, "  " .. line) end
         end
         table.insert(lines, "Log:")
         for i = 1, math.min(#App.logs, 15) do table.insert(lines, App.logs[i]) end

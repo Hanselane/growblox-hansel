@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.5.3**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.6.0**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -14,7 +14,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Tab di jendela](#tab-di-jendela)
 - [Place & Break](#place--break)
 - [Planting](#planting)
-- [World Scan](#world-scan)
+- [Scan world otomatis](#scan-world-otomatis)
 - [Harvest](#harvest)
 - [Rotation](#rotation)
 - [Settings](#settings)
@@ -33,7 +33,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Place & Break | Place & Break | Place/break dites di game. Pungut 5x5, stock, dan seed ke box: v0.3.5, dites offline |
 | Auto Collect | Place & Break | Selesai (v0.3.4), dites offline |
 | Planting | Planting | Selesai (v0.2.0), dites offline |
-| World Scan | Harvest | v0.3.9, dites offline. Langkah pertama Harvest |
+| Scan world otomatis | Harvest, Rotation | v0.6.0: tanaman & Display Box dideteksi sendiri tiap world |
 | Harvest (Fist) + Replant during harvest | Harvest | v0.4.0, dites offline |
 | Rotation (harvest → PNB → replant, multi world) | Rotation | v0.5.0, dites offline |
 
@@ -62,7 +62,7 @@ Loader mengambil rilis terbaru, mengecek ukuran dan checksum setiap file, lalu m
 | --- | --- |
 | **Place & Break** | PNB dengan grid 5x5, hit delay, Auto Collect + jangkauan, stock dan seed lewat Display Box. |
 | **Planting** | Tanam seed di daftar world farm, isi ulang dari Display Box. |
-| **Harvest** | **World Scan** (pohon mateng/tumbuh, floating, blok, isi Display Box) dan **Harvest** pakai Fist dengan Replant during harvest. |
+| **Harvest** | Harvest multi world (Fist) dengan Replant during harvest. Tanaman & Display Box dideteksi otomatis tiap world. |
 | **Rotation** | List world farm sendiri: harvest sampai target blok, PNB di samping, replant, ulang, pindah world. Jalan terus. |
 | **Settings** | Status, **Stop task**, **Reconnect to game**, **Copy diagnostics**, Anti-AFK, Rejoin world and return to PNB & Harvest, jeda dan batas waktu, **Unload script**, dan log aktivitas. |
 
@@ -109,10 +109,17 @@ Peta tile juga tampil sebagai teks di tab: `[Y]` = karakter, `[#]` = tile terpil
 
 Toggle **Auto Collect** dan slider **Jangkauan collect (tile)** (0,5 sampai 5, bawaan 2) ada di tab Place & Break.
 
-- **Saat tidak ada task jalan**: tiap 0,3 detik, semua item di lantai (blok, seed, gem, item lain) dalam jangkauan karakter dipungut tanpa jalan. Item yang ditolak server 3x (biasanya kejauhan) dilewati selama 15 detik.
+- **Saat tidak ada task jalan**: tiap 0,3 detik, semua item di lantai (blok, seed, gem, item lain) dalam jangkauan karakter dipungut **tanpa jalan**. Item yang ditolak server 3x dilewati selama 15 detik.
 - **Saat PNB jalan**: setelah memecah, PNB memungut semua item di area grid PNB atau jangkauan Auto Collect, mana yang lebih luas. Kalau Auto Collect mati, PNB cuma memungut blok, seed, dan gem di area grid.
-- Server Growblox menolak pungut dari jauh. Kalau item di pinggir jangkauan tidak terambil, kecilkan jangkauan atau berdiri lebih dekat.
-- Diagnostics menampilkan baris `Auto collect: on/off, jangkauan N, terakhir +N item`.
+
+### Jangkauan pungut server (diukur otomatis)
+
+Script tidak tahu pasti sejauh apa server Growblox menerima pungut tanpa jalan, jadi **diukur**:
+
+- Selama server belum pernah menolak, tiap pungut di area (grid PNB, baris panen, area stock) dicoba dulu dari tempat berdiri. Jarak tiap pungut dicatat: diterima atau ditolak.
+- Jarak terjauh yang pernah **diterima** dipakai sebagai jangkauan berikutnya (maks 5 tile). Kalau server menerima 2 tile, PNB 5x5 memungut semua tanpa jalan.
+- Drop yang lebih jauh dari itu didatangi: karakter jalan ke lantai terdekat, pungut, lalu kembali.
+- Diagnostics: baris `Jangkauan pungut server: diterima Nx (terjauh X tile), ditolak Nx (terdekat Y tile); dipakai Z tile`.
 
 ### Kenapa seed ditaruh ke Display Box, bukan di-drop ke lantai
 
@@ -169,20 +176,15 @@ Kalau tidak lanjut otomatis, jalankan loader lagi lalu tekan **Resume planting**
 
 Kalau task berhenti saat **mengambil seed dari box**, script menolak resume karena tidak tahu apakah seed sudah masuk tas. Cek tas dan box, lalu tekan **Clear saved planting** dan mulai lagi.
 
-## World Scan
+## Scan world otomatis
 
-Mirip Growscan di Growtopia, untuk world yang sedang lo masuki. Buka tab **Harvest**, tekan **Scan world**. Semua dibaca dari memori game, tanpa request ke server.
+Harvest dan Rotation tidak perlu scan manual. Tiap masuk world farm, script otomatis:
 
-| Bagian | Isi |
-| --- | --- |
-| Pohon | Per jenis seed: jumlah pohon, yang mateng, yang tumbuh, dan kapan semuanya mateng |
-| Floating | Total item yang melayang per jenis (drop bertanda display tidak dihitung) |
-| Blok | Jumlah blok per jenis di world |
-| Display Box | Isi tiap box (maks 6 ditampilkan) |
+1. Membaca seluruh world dari memori game (tanpa request ke server): pohon mateng/tumbuh, item floating, blok, isi Display Box. Laporannya ikut ke **Copy diagnostics** (bagian `World Scan`).
+2. Menentukan **tanaman** = jenis seed yang paling banyak ditanam di world itu.
+3. Mencari **Display Box** untuk menyimpan: box yang sudah berisi blok/seed tanaman itu didahulukan, lalu box kosong; kalau seri, yang paling dekat. Box berisi item lain tidak disentuh. World tanpa box yang cocok dilewati dengan alasan di daftar world.
 
-Status pohon dihitung dari waktu tanam + lama tumbuh item, sama seperti Claris Growblox. Sejak update Growblox 17 Nov 2026, hook pohon Claris tidak ketemu, jadi World Scan mencari tabel pohon dengan sidik jari: tabel di sekitar fungsi world yang punya data pohon di tile berisi seed. Baris `Data pohon` menjelaskan cara yang dipakai; `Contoh pohon` dan `Lama tumbuh item` membantu memastikan hasilnya benar. Hasil scan ikut ke **Copy diagnostics**.
-
-Batasan: hanya world yang sedang dimasuki, dan hasilnya snapshot (tekan scan lagi untuk update).
+Status pohon dihitung dari waktu tanam + lama tumbuh item, sama seperti Claris Growblox. Sejak update Growblox 17 Nov 2026, tabel pohon dicari dengan sidik jari (tabel di sekitar fungsi world yang punya data pohon di tile berisi seed).
 
 ## Harvest
 
@@ -190,22 +192,21 @@ Panen pakai Fist, diadaptasi dari Claris Growblox v0.1.43. Bedanya: Claris menun
 
 ### Setup
 
-1. Masuk world farm, tekan **Scan world**.
-2. Pilih **Tanaman yang dipanen** (daftar muncul setelah scan, dengan jumlah mateng/total).
-3. Berdiri di samping Display Box di world farm, tekan **Set farm Display Box here**. Box kosong atau hanya berisi blok/seed tanaman itu.
-4. Opsional: nyalakan **Replant during harvest**.
-5. Nyalakan **Harvest**.
+1. Isi **World harvest (urut)**, pisahkan dengan koma (sama seperti list world Planting).
+2. Pastikan tiap world punya Display Box kosong atau berisi blok/seed tanamannya (dideteksi otomatis).
+3. Opsional: nyalakan **Replant during harvest**.
+4. Nyalakan **Harvest**. Semua world di list dipanen satu kali jalan.
 
 ### Cara kerja
 
-1. Masuk world farm kalau belum di sana, lalu scan pohon: mana yang mateng, mana yang tumbuh.
+1. Per world: masuk, scan otomatis (tanaman + Display Box), lalu cek pohon mana yang mateng.
 2. Panen baris per baris, zigzag dari atas (sama seperti Planting). Tiap pohon mateng: jalan ke pohon, pukul (maks 3x) sampai tile kosong.
 3. **Pukul sambil collect**: hasil tiap pohon langsung dipungut dari tempat berdiri; pickup bawaan game juga tetap nyala saat jalan. Sisa drop di baris itu dipungut sebelum pindah baris.
 4. **Replant during harvest** (opsional): tile yang baru dipanen langsung ditanam lagi pakai seed di tas, termasuk seed hasil panen barusan. Tiap tanam dicek ke server; yang ditolak dilewati, panen tetap lanjut.
-5. Tas hampir penuh: blok (dan seed lebih dari 100 kalau replant nyala) disimpan dulu ke box farm, lalu lanjut. Di akhir, semua blok dan seed disimpan ke box farm.
-6. Selesai: status menampilkan jumlah dipanen, ditanam ulang, dan berapa pohon masih tumbuh beserta sisa waktunya.
+5. Tas hampir penuh: blok (dan seed lebih dari 100 kalau replant nyala) disimpan dulu ke Display Box world itu, lalu lanjut. Selesai satu world, semua blok dan seed disimpan ke box itu, lalu world berikutnya.
+6. Daftar **World harvest** menampilkan per world: dipanen, ditanam ulang, tanaman, mateng/tumbuh, dan box yang dipakai.
 
-Dengan **Rejoin world and return to PNB & Harvest** nyala: keluar ke world picker atau avatar mati saat Harvest = masuk lagi ke world farm, scan ulang, lanjut panen (pohon yang sudah dipanen tidak dihitung lagi). Berhenti kalau gagal 3x berturut-turut tanpa ada pohon yang berhasil dipanen di antaranya. Pindah server: script dimuat ulang (butuh `queue_on_teleport`) dan Harvest lanjut dari checkpoint.
+Dengan **Rejoin world and return to PNB & Harvest** nyala: keluar ke world picker atau avatar mati saat Harvest = masuk lagi ke world yang sedang dipanen, scan ulang, lanjut panen (pohon yang sudah dipanen tidak dihitung lagi). Berhenti kalau gagal 3x berturut-turut tanpa ada pohon yang berhasil dipanen di antaranya. Pindah server: script dimuat ulang (butuh `queue_on_teleport`) dan Harvest lanjut dari checkpoint.
 
 Belum ada: panen pakai Dear John Tractor, dan menunggu otomatis sampai pohon berikutnya mateng.
 
@@ -216,16 +217,14 @@ Rotation versi Hansel (bukan Full Rotation Claris). List world-nya **terpisah** 
 ### Setup
 
 1. Isi **World farm rotasi (urut)**, pisahkan dengan koma.
-2. Masuk salah satu world farm, tekan **Scan world**, lalu pilih **Tanaman rotasi**.
-3. Masuk **tiap** world di list, berdiri di samping Display Box-nya, tekan **Set Display Box world ini**. Box kosong atau berisi blok/seed tanaman itu saja. Daftar **World rotasi** menunjukkan world yang belum punya box.
-4. Atur **Harvest sampai blok di tas** (bawaan 180).
-5. Nyalakan **Rotation**.
+2. Atur **Harvest sampai blok di tas** (bawaan 180).
+3. Nyalakan **Rotation**. Tanaman dan Display Box tiap world dideteksi otomatis saat masuk world.
 
 ### Cara kerja
 
 Per world, berurutan:
 
-1. Masuk world, scan pohon.
+1. Masuk world, scan otomatis (tanaman + Display Box), cek pohon.
 2. **Harvest** pohon yang mateng (zigzag dari atas, pukul sambil collect) sampai blok di tas mencapai target.
 3. **PNB** di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri), sampai blok habis. Kalau di situ tidak ada tile kosong, karakter pindah ke tile bekas panen lain yang sampingnya kosong. Kalau tetap tidak ada, Rotation memanen 2 pohon lagi (walau blok sudah mencapai target) supaya ada tile kosong, lalu PNB.
 4. **Replant**, urutannya:
