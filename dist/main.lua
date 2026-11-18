@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.0"
+-- Growblox Hansel v0.6.1. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.1"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -2610,6 +2610,16 @@ __modules["scan"] = (function(...)
 return function(G)
     local App, Bridge = G.App, G.Bridge
     local Scan = {}
+    -- Pencarian besar dijeda sesekali supaya game tidak nge-freeze (cuma kalau sedang di dalam task).
+    local work = 0
+    local function breathe(cost)
+        work = work + (cost or 1)
+        if work >= 3000 then
+            work = 0
+            local scheduler = G.task or task
+            if coroutine.isyieldable() and scheduler and scheduler.wait then scheduler.wait() end
+        end
+    end
 
     -- Kumpulkan tabel kandidat: upvalue fungsi milik world + field tabel konteks (satu tingkat).
     local function candidateTables(r)
@@ -2631,12 +2641,14 @@ return function(G)
         for _, fn in pairs(r.handlers or {}) do if type(fn) == "function" then table.insert(functions, fn) end end
         for _, fn in ipairs(functions) do
             for _, value in pairs(Bridge.upvalues(fn)) do
+                breathe(1)
                 if add(value) then
                     -- tabel konteks: lihat field-nya juga (maks 256 per tabel)
                     pcall(function()
                         local n = 0
                         for _, field in next, value do
                             n = n + 1
+                            breathe(1)
                             if n > 256 then break end
                             add(field)
                         end
@@ -2679,7 +2691,20 @@ return function(G)
         if #seedTiles == 0 then return nil, "tidak ada pohon di world ini" end
         local w = r.world.w
         local best
-        for _, t in ipairs(candidateTables(r)) do
+        -- Cache per world: tabel pohon yang sudah ketemu dipakai lagi kalau masih cocok (cek cepat),
+        -- jadi pencarian besar cuma sekali per world, bukan tiap siklus panen.
+        local cached = r.treeResolved
+        if cached and cached.world == r.world.name then
+            local hits = 0
+            for i = 1, math.min(#seedTiles, 8) do
+                local tile = seedTiles[i]
+                local ok, entry = pcall(cached.layout.get, cached.table, tile.x, tile.y, w)
+                if ok and type(entry) == "table" and type(rawget(entry, cached.field)) == "number" then hits = hits + 1 end
+            end
+            if hits > 0 then best = { table = cached.table, layout = cached.layout, field = cached.field, hits = hits } end
+        end
+        for _, t in ipairs(best and {} or candidateTables(r)) do
+            breathe(#LAYOUTS)
             for _, layout in ipairs(LAYOUTS) do
                 local hits, field = 0, nil
                 for i = 1, math.min(#seedTiles, 8) do
@@ -2701,6 +2726,7 @@ return function(G)
             return nil, "tabel pohon tidak ketemu di " .. #candidateTables(r) .. " tabel kandidat"
         end
         local t, layout, field = best.table, best.layout, best.field
+        r.treeResolved = { world = r.world.name, table = t, layout = layout, field = field }
         local function entryAt(x, y) local ok, e = pcall(layout.get, t, x, y, w); return ok and e or nil end
         local function remaining(x, y, id)
             local entry, item = entryAt(x, y), r.items[id]
