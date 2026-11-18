@@ -229,7 +229,7 @@ T.test("Replant: lubang di baris atas dulu, lalu bekas panen, lalu sisa farm", f
     for _, p in ipairs(order) do table.insert(keys, p.x .. ":" .. p.y) end
     T.eq(table.concat(keys, " "), "2:4 7:4 3:8 4:8 9:8")
 end)
-T.test("Error di tengah rotasi (pukul gagal sekali) -> ulangi world, tidak berhenti", function()
+T.test("Error sesaat di tengah rotasi (pukul gagal sekali) -> dilewati, rotasi jalan terus", function()
     local sim = setup()
     local hit, failed = sim.App.runtime.handlers.hit, false
     sim.App.runtime.handlers.hit = function(x, y)
@@ -243,9 +243,26 @@ T.test("Error di tengah rotasi (pukul gagal sekali) -> ulangi world, tidak berhe
     sim.S.run(2, 0.025)
     sim.S.restore()
     T.eq(job, "rotation", "rotasi masih jalan setelah error")
-    T.eq(sim.App.rotationRetries, 1)
+    T.eq(sim.App.rotationSoftErrors, 1, "1 error kecil dilewati")
     T.eq(tostring(sim.App.rotationLastError):find("koneksi putus sesaat", 1, true) ~= nil, true, tostring(sim.App.rotationLastError))
     for x = 2, 9 do T.eq(sim.world.fg[8][x], SEED, "x " .. x .. " tetap selesai ditanam") end
+end)
+T.test("Blok sudah >= target & tidak ada tile kosong di samping -> panen 2 pohon lagi, tidak macet", function()
+    -- semua tile di baris sudah ada pohon (mateng), tas sudah berisi 10 blok (target 6)
+    local ripe = {}
+    for x = 0, 15 do ripe[x] = true end
+    ripe[17] = true
+    local sim = setup({ ripe = ripe })
+    sim.server[BLOCK] = 10
+    sim.G.Jobs.start("rotation")
+    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 1500)
+    local laps, job = sim.App.rotationLaps or 0, sim.App.job
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(laps >= 1, true, "putaran selesai (tidak macet)")
+    T.eq((sim.server[BLOCK] or 0) < 6, true, "blok awal 10 sudah di-PNB (sisa < target): " .. tostring(sim.server[BLOCK]))
 end)
 T.test("Resume rotation: lanjut dari world tersimpan", function()
     local sim = setup({ worlds = { "FARM", "FARM2" } })

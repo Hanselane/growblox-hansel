@@ -37,6 +37,23 @@ return function(G)
         App.rotationInfo = text
         G.setStatus(text)
     end
+    -- Jalankan satu langkah kecil (1 pukul / 1 place-break). Error sesaat (timeout request, tile
+    -- berubah saat settle, pukul gagal) tidak menghentikan world: dicatat, tunggu 0,5 detik, lanjut.
+    -- Stop, keluar world, dan avatar mati tetap dilempar ke atas. Return: true kalau sukses.
+    local function soft(token, worldName, fn, ...)
+        local ok, problem = pcall(fn, ...)
+        if ok then return true end
+        if type(problem) == "table" or tostring(problem):find("Stopped", 1, true) then error(problem, 0) end
+        problem = Movement.classifyFault(problem, token, worldName)
+        if type(problem) == "table" then error(problem, 0) end
+        App.rotationLastError = os.date("%H:%M:%S") .. " " .. tostring(problem)
+        App.rotationSoftErrors = (App.rotationSoftErrors or 0) + 1
+        pause(0.5, token)
+        Movement.takeControls()
+        return false
+    end
+    Rotation.soft = soft
+
     local function standing()
         local state = position()
         return { world = Bridge.runtime().world.name, x = math.floor(state.x), y = math.floor(state.y - 0.01) }
@@ -47,18 +64,10 @@ return function(G)
         refreshInventory(token)
         local amount = count(seedId) - (keep or 0)
         if amount > 0 then
-            info("Menyimpan " .. amount .. " seed ke Display Box " .. box.world .. "...")
+            info(string.format("Menyimpan %d seed: jalan ke Display Box %s tile %d, %d...", amount, box.world, box.x, box.y))
             G.Storage.deposit(box, seedId, amount, token, nil, blockId)
         end
     end
-    -- Seed hampir penuh di tas: simpan kelebihannya ke box, lalu balik ke `back`.
-    local function roomCheck(r, box, blockId, seedId, back, token)
-        if r.inventory:room(seedId) < 10 then
-            Rotation.storeSeeds(blockId, seedId, math.min(count(seedId), SEED_KEEP), token, box)
-            if back then Movement.moveTo(back.x, back.y, back.world, token) end
-        end
-    end
-
     -- PNB di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri). Kalau di situ
     -- tidak ada, coba berdiri di tile bekas panen lain (`spots`) yang punya samping kosong.
     -- Return: tile PNB (ikut di-replant), atau nil kalau tidak ketemu (blok tetap di tas).
@@ -70,7 +79,21 @@ return function(G)
             end
         end
     end
-    function Rotation.pnbHere(r, box, blockId, seedId, token, spots)
+    -- Seed hampir penuh saat PNB/harvest: REPLANT dulu (pakai seed, tanpa jalan jauh ke box),
+    -- baru simpan ke box kalau masih penuh. Lalu balik ke `back`.
+    local function seedOverflow(r, box, blockId, seedId, token, pending, back)
+        if r.inventory:room(seedId) >= 10 then return end
+        info("Seed hampir penuh: replant dulu...")
+        local order = Rotation.replantOrder(r, pending or {}, back and back.y)
+        if #order > 0 then Rotation.replantTiles(r, order, seedId, token) end
+        refreshInventory(token)
+        if r.inventory:room(seedId) < 10 then
+            Rotation.storeSeeds(blockId, seedId, math.min(count(seedId), SEED_KEEP), token, box)
+        end
+        if back then Movement.moveTo(back.x, back.y, back.world or r.world.name, token) end
+    end
+
+    function Rotation.pnbHere(r, box, blockId, seedId, token, spots, pending)
         local here = standing()
         local side = sideOf(r, blockId, here)
         for index = #(spots or {}), 1, -1 do
@@ -91,15 +114,24 @@ return function(G)
         local ids = { blockId, seedId, Drops.GEM }
         info(string.format("PNB di %d,%d (tile %s): %d blok...", here.x, here.y, side.x > here.x and "kanan" or "kiri", count(blockId)))
         local stuck, last = 0, count(blockId)
+        local planned = {}
+        for _, point in ipairs(pending or {}) do table.insert(planned, point) end
+        table.insert(planned, side)
         while count(blockId) > 0 do
             checkpoint(token)
             refreshResume()
-            roomCheck(r, box, blockId, seedId, here, token)
-            if tileAt(side.x, side.y) == 0 then Pnb.placeTile(here, side, blockId, token) end
-            if tileAt(side.x, side.y) == blockId then Pnb.breakTile(here, side, blockId, token) end
-            Drops.collectNear(here, ids, token, Drops.REACH)
-            assert(tileAt(side.x, side.y) == 0 or tileAt(side.x, side.y) == blockId,
+            seedOverflow(r, box, blockId, seedId, token, planned, here)
+            soft(token, r.world.name, function()
+                Pnb.placeTile(here, side, blockId, token)  -- (placeTile/breakTile cek isi tile sendiri)
+            end)
+            if tileAt(side.x, side.y) == blockId then
+                soft(token, r.world.name, function() Pnb.breakTile(here, side, blockId, token) end)
+            end
+            soft(token, r.world.name, function() Drops.collectNear(here, ids, token, Drops.REACH) end)
+            local inside = tileAt(side.x, side.y)
+            assert(inside == 0 or inside == blockId or inside == seedId,
                 "Tile PNB rotasi terisi item lain di " .. side.x .. ", " .. side.y .. ".")
+            if inside == seedId then break end -- tile PNB sudah ditanam saat replant karena seed penuh
             -- jaga-jaga: 8 putaran tanpa blok berkurang = jangan muter selamanya
             if count(blockId) < last then stuck, last = 0, count(blockId) else stuck = stuck + 1 end
             if stuck >= 8 then
@@ -166,32 +198,45 @@ return function(G)
         local ids = { blockId, seedId, Drops.GEM }
         local total, pending, plan = 0, {}, nil
         local stats = { harvested = 0, pnb = 0, replanted = 0 }
+        -- extra = pohon yang tetap dipanen walau blok sudah >= target. Dipakai kalau PNB tidak
+        -- menemukan tile kosong di samping: panen 2 pohon lagi supaya ada tile kosong untuk PNB.
+        local extra = 0
+        -- dipakai juga untuk laporan; diulang dari scan setelah error tidak menghapus hitungan putaran ini
         local function progress(phase)
             info(string.format("Rotasi %s (%d/%d) - %s | dipanen %d, PNB %d blok, ditanam ulang %d",
                 name, index, #cfg.worlds, phase, stats.harvested, stats.pnb, stats.replanted))
         end
         while true do
             checkpoint(token)
+            pause(0.05, token) -- selalu beri jeda: loop ini tidak boleh muter tanpa henti
             refreshResume()
             refreshInventory(token)
             -- 1) scan + HARVEST sampai blok di tas mencapai target
             plan = Harvest.plan(r, seedId)
             local harvested = {}
-            if count(blockId) < target then
+            local function full() return count(blockId) >= target and extra <= 0 end
+            if not full() then
                 progress("harvest (" .. plan.ripe .. " pohon mateng)")
                 for _, entry in ipairs(plan.rows) do
                     for _, point in ipairs(entry.points) do
-                        if count(blockId) >= target then break end
+                        if full() then break end
                         checkpoint(token)
                         refreshResume()
-                        roomCheck(r, box, blockId, seedId, nil, token)
-                        if Harvest.harvestTree(r, point, seedId, plan.resolver, token) then
-                            Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.REACH)
+                        seedOverflow(r, box, blockId, seedId, token, harvested, nil)
+                        local got = false
+                        local ok = soft(token, name, function()
+                            got = Harvest.harvestTree(r, point, seedId, plan.resolver, token)
+                        end)
+                        if ok and got then
+                            soft(token, name, function()
+                                Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.REACH)
+                            end)
                             table.insert(harvested, point)
                             stats.harvested = stats.harvested + 1
+                            if count(blockId) >= target then extra = extra - 1 end
                         end
                     end
-                    if count(blockId) >= target then break end
+                    if full() then break end
                 end
                 -- sisa drop di sekitar pohon yang barusan dipanen
                 if #harvested > 0 then
@@ -203,13 +248,20 @@ return function(G)
             for _, point in ipairs(harvested) do table.insert(pending, point) end
             if #harvested == 0 and count(blockId) == 0 and #pending == 0 then break end
             -- 2) PNB di tempat berhenti sampai blok habis
+            local didPnb = false
             if count(blockId) > 0 then
                 local before = count(blockId)
                 progress("PNB")
-                local side = Rotation.pnbHere(r, box, blockId, seedId, token, harvested)
+                local side = Rotation.pnbHere(r, box, blockId, seedId, token, harvested, pending)
                 if side then
                     table.insert(pending, side)
-                    stats.pnb = stats.pnb + before
+                    stats.pnb = stats.pnb + (before - count(blockId))
+                    extra = 0
+                    didPnb = true
+                elseif plan.ripe > #harvested then
+                    extra = 2 -- tidak ada tile kosong: panen 2 pohon lagi biar ada tempat PNB
+                else
+                    info("Blok tidak bisa di-PNB (tidak ada tile kosong & pohon mateng habis); blok tetap di tas.")
                 end
             end
             -- 3) REPLANT tile yang dipanen (+ tile PNB), sampai ketemu pohon mateng berikutnya
@@ -224,7 +276,8 @@ return function(G)
             -- bekas panen terbaru didahulukan, sisanya tertangkap lagi di langkah "sisa farm".
             pending = {}
             -- tidak ada pohon mateng lagi di world ini (atau tidak ada yang bisa dipanen sama sekali)
-            if plan.ripe == 0 or (#harvested == 0 and count(blockId) == 0) then break end
+            -- berhenti kalau pohon mateng habis, atau putaran ini tidak mengubah apa pun
+            if plan.ripe == 0 or (#harvested == 0 and not didPnb and extra <= 0) then break end
         end
         -- 4) simpan seed sisa (dan blok kalau masih ada) ke Display Box world ini
         progress("simpan seed sisa ke Display Box")

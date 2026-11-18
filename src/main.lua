@@ -140,6 +140,7 @@ return function(modules, VERSION)
             "Rotation: " .. tostring(App.rotationInfo or "-") .. " | world ke-" .. tostring(App.rotationIndex or "-")
                 .. ", putaran " .. tostring(App.rotationLaps or 0) .. ", masuk ulang " .. tostring(App.rotationRejoins or 0) .. "x"
                 .. ", ulang karena error " .. tostring(App.rotationRetries or 0) .. "x"
+                .. ", error kecil dilewati " .. tostring(App.rotationSoftErrors or 0) .. "x"
                 .. (App.rotationLastError and ("; error terakhir: " .. App.rotationLastError) or ""),
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | seed " .. tostring(App.config.harvesting.seedId)
                 .. ", replant " .. tostring(App.config.harvesting.replant) .. ", box " .. G.Storage.pointText(App.config.points.farmBox),

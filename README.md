@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.5.2**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.5.3**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -227,7 +227,7 @@ Per world, berurutan:
 
 1. Masuk world, scan pohon.
 2. **Harvest** pohon yang mateng (zigzag dari atas, pukul sambil collect) sampai blok di tas mencapai target.
-3. **PNB** di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri), sampai blok habis. Kalau di situ tidak ada tile kosong, karakter pindah ke tile bekas panen lain yang sampingnya kosong. Kalau tetap tidak ada, blok tetap di tas dan di-PNB di putaran berikutnya.
+3. **PNB** di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri), sampai blok habis. Kalau di situ tidak ada tile kosong, karakter pindah ke tile bekas panen lain yang sampingnya kosong. Kalau tetap tidak ada, Rotation memanen 2 pohon lagi (walau blok sudah mencapai target) supaya ada tile kosong, lalu PNB.
 4. **Replant**, urutannya:
    1. lubang (tile kosong yang bisa ditanam) di baris **di atas** posisi sekarang, supaya farm tidak bolong-bolong;
    2. tile yang barusan dipanen, termasuk tile PNB;
@@ -236,16 +236,17 @@ Per world, berurutan:
 5. Ulangi 1–4 sampai tidak ada pohon mateng di world itu.
 6. Simpan **seed** sisa ke Display Box world itu (blok tidak pernah disimpan), lalu lanjut ke world berikutnya.
 
-Setelah world terakhir, balik ke world pertama. Kalau satu putaran penuh tidak ada yang dipanen, Rotation menunggu sampai pohon tercepat mateng (maks 10 menit per tunggu) lalu putar lagi. Di tengah putaran, kalau seed di tas hampir penuh, kelebihannya (di atas 100) disimpan dulu ke box world itu.
+Setelah world terakhir, balik ke world pertama. Kalau satu putaran penuh tidak ada yang dipanen, Rotation menunggu sampai pohon tercepat mateng (maks 10 menit per tunggu) lalu putar lagi. Di tengah putaran, kalau seed di tas hampir penuh: **replant dulu** (urutan yang sama), baru kalau masih penuh kelebihannya (di atas 100) disimpan ke box world itu. Jadi jarang jalan jauh ke box di tengah PNB.
 
 ### Kalau error atau berhenti di tengah jalan
 
-- **Error di tengah jalan** (pukul gagal, jalan timeout, request box gagal, dll.) tidak langsung menghentikan rotasi: tunggu 3 detik lalu ulangi world itu dari scan. Rotasi baru berhenti kalau gagal **5x berturut-turut tanpa kemajuan** sama sekali.
+- **Error kecil** saat satu langkah PNB/panen (request ke server timeout, tile berubah saat settle, pukul gagal) dilewati: tunggu 0,5 detik lalu lanjut langkah berikutnya, tanpa mengulang world.
+- **Error lain di tengah jalan** (jalan timeout, request box gagal, dll.) tidak langsung menghentikan rotasi: tunggu 3 detik lalu ulangi world itu dari scan. Rotasi baru berhenti kalau gagal **5x berturut-turut tanpa kemajuan** sama sekali.
 - **Keluar world / avatar mati / pindah server** ikut setting **Rejoin world and return to PNB & Harvest**: masuk lagi ke world yang sedang dikerjakan dan lanjut dari scan.
 - **Checkpoint** (world ke berapa) selalu disimpan saat masuk tiap world dan tiap 2 menit, berlaku 6 jam. Kalau rotasi berhenti karena error atau script dimuat ulang, tekan **Resume rotation** untuk lanjut dari world terakhir. **Stop** manual menghapus checkpoint.
 - PNB yang tidak maju 8 putaran berturut-turut (place/break ditolak) dihentikan dan rotasi lanjut ke replant, supaya tidak muter selamanya.
 
-Daftar **World rotasi** dan diagnostics (`Rotation:`) menampilkan total dipanen, blok PNB, ditanam ulang, tile kosong yang tersisa, berapa kali diulang karena error, dan error terakhir.
+Daftar **World rotasi** dan diagnostics (`Rotation:`) menampilkan total dipanen, blok PNB, ditanam ulang, tile kosong yang tersisa, berapa kali diulang karena error, error kecil yang dilewati, dan error terakhir.
 
 ## Settings
 
