@@ -52,6 +52,7 @@ return function(G)
 
     -- Simpan HANYA seed ke box world ini (blok tetap di tas untuk PNB). keep = seed yang disisakan.
     function Rotation.storeSeeds(blockId, seedId, keep, token, box)
+        if not box then return end -- world ini tanpa Display Box yang cocok: seed tetap di tas
         refreshInventory(token)
         local amount = count(seedId) - (keep or 0)
         if amount > 0 then
@@ -177,13 +178,16 @@ return function(G)
         App.rotationIndex = index
         Rotation.saveResume()
         -- Masuk + scan otomatis: tanaman = seed terbanyak di world, Display Box dicari otomatis.
-        local setup, why = Harvest.setupWorld(name, token, string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume)
+        -- Box tidak wajib: tanpa box yang cocok, rotasi tetap jalan; seed sisa tetap di tas.
+        local setup, why = Harvest.setupWorld(name, token, string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false)
         App.rotationWorlds = App.rotationWorlds or {}
         if not setup then
             App.rotationWorlds[name] = "dilewati: " .. why
-            return 0, nil
+            info("Rotasi: " .. name .. " dilewati (" .. why .. ").")
+            return 0, nil, true
         end
         local r, seedId, blockId, box = setup.r, setup.seedId, setup.blockId, setup.box
+        App.rotationBoxNote = setup.boxProblem and (name .. ": tanpa Display Box (" .. setup.boxProblem .. "); seed sisa tetap di tas") or nil
         local ids = { blockId, seedId, Drops.GEM }
         local total, pending, plan = 0, {}, nil
         local stats = { harvested = 0, pnb = 0, replanted = 0 }
@@ -287,11 +291,12 @@ return function(G)
         local index = saved and saved.worldIndex or 1
         if index > #cfg.worlds then index = 1 end
         while true do
-            local harvested, soonest = 0, nil
+            local harvested, soonest, skipped = 0, nil, {}
             for i = index, #cfg.worlds do
-                local got, soon = Rotation.runWorld(i, token)
+                local got, soon, skip = Rotation.runWorld(i, token)
                 harvested = harvested + got
                 if soon then soonest = math.min(soonest or soon, soon) end
+                if skip then table.insert(skipped, cfg.worlds[i] .. ": " .. tostring(App.rotationWorlds[cfg.worlds[i]])) end
             end
             index = 1
             App.rotationLaps = (App.rotationLaps or 0) + 1
@@ -300,8 +305,8 @@ return function(G)
                 local wait = math.max(5, math.min(soonest or 60, 600))
                 local deadline = os.clock() + wait
                 while os.clock() < deadline do
-                    info("Rotasi: belum ada pohon mateng di semua world. Cek lagi dalam "
-                        .. Harvest.duration(deadline - os.clock()) .. ".")
+                    info((#skipped > 0 and ("Rotasi: " .. table.concat(skipped, " | ") .. ". ") or "Rotasi: belum ada pohon mateng di semua world. ")
+                        .. "Cek lagi dalam " .. Harvest.duration(deadline - os.clock()) .. ".")
                     refreshResume()
                     pause(math.min(5, math.max(0.1, deadline - os.clock())), token)
                 end

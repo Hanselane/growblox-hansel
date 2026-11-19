@@ -150,6 +150,14 @@ return function(modules, VERSION)
                 .. ", putaran " .. tostring(App.rotationLaps or 0)
                 .. ", error kecil dilewati " .. tostring(App.rotationSoftErrors or 0) .. "x"
                 .. (App.rotationLastError and ("; error kecil terakhir: " .. App.rotationLastError) or ""),
+            (function()
+                local parts = {}
+                for _, pair in ipairs({ { "World rotasi", App.rotationWorlds }, { "World harvest", App.harvestWorlds } }) do
+                    for name, text in pairs(pair[2] or {}) do table.insert(parts, pair[1] .. " " .. name .. ": " .. text) end
+                end
+                if App.rotationBoxNote then table.insert(parts, "Catatan box: " .. App.rotationBoxNote) end
+                return #parts > 0 and table.concat(parts, "\n") or "World rotasi/harvest: -"
+            end)(),
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | world ke-" .. tostring(App.harvestIndex or "-")
                 .. ", replant " .. tostring(App.config.harvesting.replant),
             "Jangkauan pungut server: " .. G.Drops.reachText(),

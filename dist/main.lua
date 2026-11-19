@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.1. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.1"
+-- Growblox Hansel v0.6.2. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.2"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -4311,8 +4311,9 @@ return function(G)
     end
 
     -- Masuk world, deteksi tanaman + blok hasilnya + Display Box untuk menyimpan (blok & seed).
-    -- Dipakai Harvest dan Rotation. Return: { r, seedId, blockId, box } atau nil + alasan.
-    function Harvest.setupWorld(name, token, label, save)
+    -- Dipakai Harvest dan Rotation. Return: { r, seedId, blockId, box, boxProblem } atau nil + alasan.
+    -- needBox = false: world tetap dikerjakan walau tidak ada box yang cocok (box = nil).
+    function Harvest.setupWorld(name, token, label, save, needBox)
         local r = Bridge.runtime()
         if r.world.name ~= name or Bridge.pickerOpen(r) then
             G.setStatus(label .. ": masuk " .. name .. "...")
@@ -4324,9 +4325,14 @@ return function(G)
         if not seedId then return nil, "tidak ada pohon" end
         local blockId = Core.blockForSeed(r.items, seedId)
         local found, box = pcall(Storage.findBox, { blockId, seedId })
-        if not found then return nil, tostring(box) end
+        local boxProblem
+        if not found then
+            boxProblem = tostring(box):gsub("^.-:%d+: ", "")
+            if needBox ~= false then return nil, boxProblem end
+            box = nil
+        end
         pcall(Scan.run) -- laporan scan lengkap ikut ke diagnostics
-        return { r = r, seedId = seedId, blockId = blockId, box = box, trees = trees }
+        return { r = r, seedId = seedId, blockId = blockId, box = box, boxProblem = boxProblem, trees = trees }
     end
 
     Harvest.store, Harvest.replant, Harvest.harvestTree, Harvest.duration = store, replant, harvestTree, duration
@@ -4523,6 +4529,7 @@ return function(G)
 
     -- Simpan HANYA seed ke box world ini (blok tetap di tas untuk PNB). keep = seed yang disisakan.
     function Rotation.storeSeeds(blockId, seedId, keep, token, box)
+        if not box then return end -- world ini tanpa Display Box yang cocok: seed tetap di tas
         refreshInventory(token)
         local amount = count(seedId) - (keep or 0)
         if amount > 0 then
@@ -4648,13 +4655,16 @@ return function(G)
         App.rotationIndex = index
         Rotation.saveResume()
         -- Masuk + scan otomatis: tanaman = seed terbanyak di world, Display Box dicari otomatis.
-        local setup, why = Harvest.setupWorld(name, token, string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume)
+        -- Box tidak wajib: tanpa box yang cocok, rotasi tetap jalan; seed sisa tetap di tas.
+        local setup, why = Harvest.setupWorld(name, token, string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false)
         App.rotationWorlds = App.rotationWorlds or {}
         if not setup then
             App.rotationWorlds[name] = "dilewati: " .. why
-            return 0, nil
+            info("Rotasi: " .. name .. " dilewati (" .. why .. ").")
+            return 0, nil, true
         end
         local r, seedId, blockId, box = setup.r, setup.seedId, setup.blockId, setup.box
+        App.rotationBoxNote = setup.boxProblem and (name .. ": tanpa Display Box (" .. setup.boxProblem .. "); seed sisa tetap di tas") or nil
         local ids = { blockId, seedId, Drops.GEM }
         local total, pending, plan = 0, {}, nil
         local stats = { harvested = 0, pnb = 0, replanted = 0 }
@@ -4758,11 +4768,12 @@ return function(G)
         local index = saved and saved.worldIndex or 1
         if index > #cfg.worlds then index = 1 end
         while true do
-            local harvested, soonest = 0, nil
+            local harvested, soonest, skipped = 0, nil, {}
             for i = index, #cfg.worlds do
-                local got, soon = Rotation.runWorld(i, token)
+                local got, soon, skip = Rotation.runWorld(i, token)
                 harvested = harvested + got
                 if soon then soonest = math.min(soonest or soon, soon) end
+                if skip then table.insert(skipped, cfg.worlds[i] .. ": " .. tostring(App.rotationWorlds[cfg.worlds[i]])) end
             end
             index = 1
             App.rotationLaps = (App.rotationLaps or 0) + 1
@@ -4771,8 +4782,8 @@ return function(G)
                 local wait = math.max(5, math.min(soonest or 60, 600))
                 local deadline = os.clock() + wait
                 while os.clock() < deadline do
-                    info("Rotasi: belum ada pohon mateng di semua world. Cek lagi dalam "
-                        .. Harvest.duration(deadline - os.clock()) .. ".")
+                    info((#skipped > 0 and ("Rotasi: " .. table.concat(skipped, " | ") .. ". ") or "Rotasi: belum ada pohon mateng di semua world. ")
+                        .. "Cek lagi dalam " .. Harvest.duration(deadline - os.clock()) .. ".")
                     refreshResume()
                     pause(math.min(5, math.max(0.1, deadline - os.clock())), token)
                 end
@@ -5016,6 +5027,14 @@ return function(modules, VERSION)
                 .. ", putaran " .. tostring(App.rotationLaps or 0)
                 .. ", error kecil dilewati " .. tostring(App.rotationSoftErrors or 0) .. "x"
                 .. (App.rotationLastError and ("; error kecil terakhir: " .. App.rotationLastError) or ""),
+            (function()
+                local parts = {}
+                for _, pair in ipairs({ { "World rotasi", App.rotationWorlds }, { "World harvest", App.harvestWorlds } }) do
+                    for name, text in pairs(pair[2] or {}) do table.insert(parts, pair[1] .. " " .. name .. ": " .. text) end
+                end
+                if App.rotationBoxNote then table.insert(parts, "Catatan box: " .. App.rotationBoxNote) end
+                return #parts > 0 and table.concat(parts, "\n") or "World rotasi/harvest: -"
+            end)(),
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | world ke-" .. tostring(App.harvestIndex or "-")
                 .. ", replant " .. tostring(App.config.harvesting.replant),
             "Jangkauan pungut server: " .. G.Drops.reachText(),

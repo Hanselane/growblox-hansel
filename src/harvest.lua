@@ -125,8 +125,9 @@ return function(G)
     end
 
     -- Masuk world, deteksi tanaman + blok hasilnya + Display Box untuk menyimpan (blok & seed).
-    -- Dipakai Harvest dan Rotation. Return: { r, seedId, blockId, box } atau nil + alasan.
-    function Harvest.setupWorld(name, token, label, save)
+    -- Dipakai Harvest dan Rotation. Return: { r, seedId, blockId, box, boxProblem } atau nil + alasan.
+    -- needBox = false: world tetap dikerjakan walau tidak ada box yang cocok (box = nil).
+    function Harvest.setupWorld(name, token, label, save, needBox)
         local r = Bridge.runtime()
         if r.world.name ~= name or Bridge.pickerOpen(r) then
             G.setStatus(label .. ": masuk " .. name .. "...")
@@ -138,9 +139,14 @@ return function(G)
         if not seedId then return nil, "tidak ada pohon" end
         local blockId = Core.blockForSeed(r.items, seedId)
         local found, box = pcall(Storage.findBox, { blockId, seedId })
-        if not found then return nil, tostring(box) end
+        local boxProblem
+        if not found then
+            boxProblem = tostring(box):gsub("^.-:%d+: ", "")
+            if needBox ~= false then return nil, boxProblem end
+            box = nil
+        end
         pcall(Scan.run) -- laporan scan lengkap ikut ke diagnostics
-        return { r = r, seedId = seedId, blockId = blockId, box = box, trees = trees }
+        return { r = r, seedId = seedId, blockId = blockId, box = box, boxProblem = boxProblem, trees = trees }
     end
 
     Harvest.store, Harvest.replant, Harvest.harvestTree, Harvest.duration = store, replant, harvestTree, duration

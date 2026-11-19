@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.6.1**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.6.2**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -219,6 +219,8 @@ Rotation versi Hansel (bukan Full Rotation Claris). List world-nya **terpisah** 
 1. Isi **World farm rotasi (urut)**, pisahkan dengan koma.
 2. Atur **Harvest sampai blok di tas** (bawaan 180).
 3. Nyalakan **Rotation**. Tanaman dan Display Box tiap world dideteksi otomatis saat masuk world.
+
+Display Box tidak wajib untuk Rotation: kalau di world itu tidak ada box kosong / berisi seed-blok tanamannya, rotasi tetap jalan dan seed sisa tetap di tas (diagnostics: `Catatan box`). World yang dilewati (misal tidak ada pohon) alasannya muncul di status dan diagnostics (`World rotasi ...`).
 
 ### Cara kerja
 
