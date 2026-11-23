@@ -244,6 +244,7 @@ return function(G)
         clear = function() Harvest.clearResume() end,
         resume = true,
         validResume = function(data) return type(data.worldIndex) == "number" end,
+        resumeWorld = function(data, config) return config.harvesting.worlds[data.worldIndex or 1] end,
     })
 
     ---------------------------------------------------------------- tab Harvest

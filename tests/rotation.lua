@@ -317,6 +317,16 @@ T.test("Resume dari world picker (script dimuat ulang setelah mental): masuk wor
     T.eq(sim.world.name, "FARM")
     T.eq(tostring(sim.App.rotationWorlds.FARM):find("total dipanen 8", 1, true) ~= nil, true, tostring(sim.App.rotationWorlds.FARM))
 end)
+T.test("World tujuan resume (buat masuk lewat UI picker) dibaca dari checkpoint", function()
+    local sim = setup({ worlds = { "FARM", "FARM2" } })
+    local config = Core.validate(sim.App.config)
+    sim.G.State.loadCheckpoint = function(name)
+        if name == "rotation" then return { config = config, profile = "Default", data = { worldIndex = 2 } } end
+    end
+    local target, mode = sim.G.Jobs.resumeTargetWorld()
+    sim.S.restore()
+    T.eq(target, "FARM2"); T.eq(mode, "rotation")
+end)
 T.test("Resume rotation: lanjut dari world tersimpan", function()
     local sim = setup({ worlds = { "FARM", "FARM2" } })
     local config = Core.validate(sim.App.config)

@@ -46,6 +46,7 @@ return function(modules, VERSION)
         getupvalue = getupvalue or (debug and debug.getupvalue),
         debugInfo = debug and debug.info, getinfo = getinfo or (debug and debug.getinfo),
         getrawmetatable = getrawmetatable, setclipboard = setclipboard or toclipboard,
+        getconnections = getconnections or get_signal_cons, firesignal = firesignal,
         sharedTables = { { label = "executor shared", value = shared }, { label = "executor globals", value = env.shared } },
     }
     if type(getrenv) == "function" then
@@ -120,6 +121,61 @@ return function(modules, VERSION)
         return r
     end
 
+    -- Masuk world lewat UI world picker: isi kotak "World Name", lalu tekan Enter / "Enter World".
+    -- Cara menekan dicoba berurutan sesuai dukungan executor. Return: cara yang dipakai.
+    function G.enterFromPicker(name)
+        local gui = assert(player:FindFirstChildOfClass("PlayerGui"), "PlayerGui tidak ada.")
+        local box, button
+        for _, object in ipairs(gui:GetDescendants()) do
+            if not box and object.Name == "WorldName" then
+                box = object:IsA("TextBox") and object or object:FindFirstChildWhichIsA("TextBox", true)
+                    or (object.Parent and object.Parent:FindFirstChildWhichIsA("TextBox", true))
+            end
+            if not button and object:IsA("GuiButton") then
+                local text = (object:IsA("TextButton") and object.Text or "") .. " " .. object.Name
+                for _, child in ipairs(object:GetDescendants()) do
+                    if child:IsA("TextLabel") then text = text .. " " .. child.Text end
+                end
+                if text:lower():find("enter world", 1, true) or text:lower():find("enterworld", 1, true) then button = object end
+            end
+        end
+        assert(box, "Kotak World Name di world picker tidak ketemu.")
+        box.Text = name
+        local X = G.exec
+        if type(X.getconnections) == "function" then
+            local fired = 0
+            for _, connection in ipairs(X.getconnections(box.FocusLost)) do
+                local ok = pcall(function()
+                    if connection.Fire then connection:Fire(true) else connection.Function(true) end
+                end)
+                if ok then fired = fired + 1 end
+            end
+            if fired > 0 then return "Enter di kotak World Name" end
+            if button then
+                for _, signal in ipairs({ button.Activated, button.MouseButton1Click }) do
+                    for _, connection in ipairs(X.getconnections(signal)) do
+                        local ok = pcall(function()
+                            if connection.Fire then connection:Fire() else connection.Function() end
+                        end)
+                        if ok then fired = fired + 1 end
+                    end
+                    if fired > 0 then return "tombol Enter World (koneksi)" end
+                end
+            end
+        end
+        if button and type(X.firesignal) == "function" then
+            if pcall(X.firesignal, button.MouseButton1Click) then return "tombol Enter World (firesignal)" end
+        end
+        assert(button, "Tombol Enter World tidak ketemu.")
+        local input = game:GetService("VirtualInputManager")
+        local inset = game:GetService("GuiService"):GetGuiInset()
+        local center = button.AbsolutePosition + button.AbsoluteSize / 2 + inset
+        input:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+        task.wait(0.05)
+        input:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+        return "klik virtual Enter World"
+    end
+
     function G.diagnostics()
         local lines = {
             "Growblox Hansel " .. VERSION,
@@ -128,7 +184,7 @@ return function(modules, VERSION)
             "Status: " .. App.status,
             "Connect error: " .. (App.connectionError or "tidak ada"),
             "Percobaan connect: " .. tostring(App.connectAttempts or "-"),
-            "Tahap startup: " .. App.startupStage,
+            "Tahap startup: " .. App.startupStage .. (App.pickerEntry and (" | masuk lewat picker: " .. App.pickerEntry) or ""),
             "Loader: " .. tostring(env.GrowbloxHanselLoaderDebug or "lokal / tidak diketahui"),
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
@@ -270,6 +326,19 @@ return function(modules, VERSION)
         local deadline = os.clock() + 30
         while App.alive and ReplicatedStorage:GetAttribute("Qz") == nil and os.clock() < deadline do task.wait(0.25) end
         if not App.alive then return end
+        -- Dimuat ulang (auto-resume) tapi masih di world picker dan game belum memuat world sama
+        -- sekali (Qz belum ada, world table 0): masuk ke world tujuan task lewat UI picker dulu.
+        if env.GrowbloxHanselAutoResume and ReplicatedStorage:GetAttribute("Qz") == nil then
+            local target = G.Jobs.resumeTargetWorld()
+            for attempt = 1, 3 do
+                if not target or ReplicatedStorage:GetAttribute("Qz") ~= nil or not App.alive then break end
+                G.setStatus("Masuk " .. target .. " lewat world picker (" .. attempt .. "/3)...")
+                local ok, how = pcall(G.enterFromPicker, target)
+                App.pickerEntry = (ok and tostring(how) or ("gagal: " .. tostring(how))) .. " -> " .. target
+                local wait = os.clock() + 20
+                while App.alive and ReplicatedStorage:GetAttribute("Qz") == nil and os.clock() < wait do task.wait(0.25) end
+            end
+        end
         App.configuring = true
         local ok, message = pcall(G.connect, env.GrowbloxHanselAutoResume == true)
         App.configuring = false

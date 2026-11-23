@@ -27,6 +27,20 @@ return function(G)
         end
     end
 
+    -- World tujuan dari checkpoint yang menunggu dilanjutkan (dipakai saat script dimuat ulang di
+    -- world picker dan game belum memuat world sama sekali: masuk lewat UI picker dulu).
+    function Jobs.resumeTargetWorld()
+        for mode, spec in pairs(Jobs.specs) do
+            if spec.resume and spec.resumeWorld then
+                local ok, record = pcall(G.State.loadCheckpoint, mode)
+                if ok and record and type(record.data) == "table" then
+                    local found, name = pcall(spec.resumeWorld, record.data, record.config)
+                    if found and type(name) == "string" and name ~= "" then return name, mode end
+                end
+            end
+        end
+    end
+
     ---------------------------------------------------------------- dipakai bersama PNB, Harvest, Rotation
     -- Checkpoint task: save() simpan data(), refresh() simpan ulang tiap 2 menit (supaya tidak basi
     -- saat task jalan lama, batas 6 jam), clear() hapus. Error simpan dicatat, task tetap jalan.

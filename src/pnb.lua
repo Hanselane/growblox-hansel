@@ -319,6 +319,7 @@ return function(G)
         clear = function() Pnb.clearResume() end,
         resume = true, -- lanjut otomatis setelah pindah server
         validResume = function(data) return type(data.anchor) == "table" end,
+        resumeWorld = function(data) return data.anchor and data.anchor.world end,
     })
 
     ---------------------------------------------------------------- tab Place & Break

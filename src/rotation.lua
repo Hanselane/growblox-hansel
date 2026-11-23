@@ -364,6 +364,7 @@ return function(G)
         clear = function() Rotation.clearResume() end,
         resume = true,
         validResume = function(data) return type(data.worldIndex) == "number" end,
+        resumeWorld = function(data, config) return config.rotation.worlds[data.worldIndex or 1] or config.rotation.worlds[1] end,
     })
     -- Lanjut rotasi dari checkpoint (world terakhir yang dikerjakan). Dipakai tombol "Resume rotation"
     -- setelah rotasi berhenti karena error, dan otomatis setelah pindah server.
