@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.6.2**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.6.3**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -246,6 +246,8 @@ Setelah world terakhir, balik ke world pertama. Kalau satu putaran penuh tidak a
 - **Keluar world / avatar mati / pindah server** ikut setting **Rejoin world and return to PNB & Harvest**: masuk lagi ke world yang sedang dikerjakan dan lanjut dari scan.
 - **Checkpoint** (world ke berapa) selalu disimpan saat masuk tiap world dan tiap 2 menit, berlaku 6 jam. Kalau rotasi berhenti karena error atau script dimuat ulang, tekan **Resume rotation** untuk lanjut dari world terakhir. **Stop** manual menghapus checkpoint.
 - PNB yang tidak maju 8 putaran berturut-turut (place/break ditolak) dihentikan dan rotasi lanjut ke replant, supaya tidak muter selamanya.
+
+Diagnostics `Waktu rotasi` menunjukkan berapa detik habis di tiap tahap (harvest, PNB, replant, masuk & scan world, simpan seed), rata-rata per pohon/blok/tile, dan persentasenya, supaya optimasi berikutnya berdasarkan data. Saat PNB, pungut drop dilewati kalau di area belum ada drop (tanpa jeda dan tanpa request inventory); drop yang muncul belakangan terambil di putaran berikutnya.
 
 Daftar **World rotasi** dan diagnostics (`Rotation:`) menampilkan total dipanen, blok PNB, ditanam ulang, tile kosong yang tersisa, berapa kali diulang karena error, error kecil yang dilewati, dan error terakhir.
 

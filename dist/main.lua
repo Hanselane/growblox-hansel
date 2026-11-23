@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.2. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.2"
+-- Growblox Hansel v0.6.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.3"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -2262,9 +2262,24 @@ return function(G)
     -- Pungut semua drop dengan id di `ids` dalam kotak di sekitar posisi berdiri `anchor`:
     -- |x - tengah| <= radius, dan y dari anchor.y - up sampai anchor.y + down.
     -- Return: tabel { [id] = jumlah yang berhasil dipungut }, dan jumlah drop yang dilewati.
+    -- options.onlyIfPresent = true: kalau di area belum ada drop yang cocok, langsung selesai tanpa
+    -- jeda dan tanpa request inventory (hemat ~0,3-0,5 detik per panggilan di PNB/panen; drop yang
+    -- muncul belakangan terambil di panggilan berikutnya).
     function Drops.collectNear(anchor, ids, token, options)
         options = options or {}
         local radius, up, down = options.radius or 1.25, options.up or 1.5, options.down or 1.25
+        if options.onlyIfPresent then
+            local r, all, any = Bridge.runtime(), ids == "all", false
+            local wanted = {}
+            if not all then for _, id in ipairs(ids) do wanted[id] = true end end
+            for _, drop in pairs(r.world.dropList()) do
+                if type(drop) == "table" and not drop.display and type(drop.n) == "number" and drop.n > 0
+                    and (all or wanted[drop.id]) and type(drop.x) == "number" and type(drop.y) == "number"
+                    and math.abs(drop.x - (anchor.x + 0.5)) <= radius
+                    and drop.y >= anchor.y - up and drop.y <= anchor.y + down then any = true; break end
+            end
+            if not any then App.collectSkips = (App.collectSkips or 0) + 1; return {}, 0 end
+        end
         pause(App.config.options.collectDelay, token)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)
@@ -3841,13 +3856,29 @@ return function(G)
     -- grid 5x5. Tile di pinggir grid (2 tile dari karakter) di luar jangkauan server, jadi
     -- karakter melangkah ke sana, memungut, lalu kembali ke posisi PNB.
     local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
-    function Pnb.collect(anchor, pickupIds, token)
+    -- quick = true (tiap putaran PNB): kalau belum ada drop di area, lewati tanpa request apa pun.
+    local function anyDrop(anchor, ids, area)
+        local all, wanted = ids == "all", {}
+        if not all then for _, id in ipairs(ids) do wanted[id] = true end end
+        for _, drop in pairs(Bridge.runtime().world.dropList()) do
+            if type(drop) == "table" and not drop.display and type(drop.n) == "number" and drop.n > 0
+                and (all or wanted[drop.id]) and type(drop.x) == "number" and type(drop.y) == "number"
+                and math.abs(drop.x - (anchor.x + 0.5)) <= area.radius
+                and drop.y >= anchor.y - area.up and drop.y <= anchor.y + area.down then return true end
+        end
+        return false
+    end
+    function Pnb.collect(anchor, pickupIds, token, quick)
         local ids, area = pickupIds, GRID_AREA
         if App.config.options.autoCollect then
             local range = App.config.options.collectRange
             ids = "all"
             area = { radius = math.max(GRID_AREA.radius, range), up = math.max(GRID_AREA.up, range),
                 down = math.max(GRID_AREA.down, range) }
+        end
+        if quick and not anyDrop(anchor, ids, area) then
+            App.collectSkips = (App.collectSkips or 0) + 1
+            return
         end
         local got = Drops.collectArea(anchor, ids, token, area)
         local n = 0
@@ -3962,7 +3993,7 @@ return function(G)
             end
             assert(worked, "Semua tile PNB terhalang blok lain. Kosongkan tile yang dipilih atau pilih tile lain.")
             G.setStatus("Collecting gems, seeds, and returned blocks...")
-            Pnb.collect(anchor, pickupIds, token)
+            Pnb.collect(anchor, pickupIds, token, true)
         end
     end
 
@@ -4501,6 +4532,21 @@ return function(G)
     Rotation.saveResume, Rotation.clearResume = resumePoint.save, resumePoint.clear
     local refreshResume = resumePoint.refresh
 
+    -- Pencatat waktu per tahap (diagnostics "Waktu rotasi"): total detik + jumlah unit per tahap.
+    App.phaseTime = App.phaseTime or {}
+    local function timed(phase, units, fn, ...)
+        local started = os.clock()
+        local results = table.pack(pcall(fn, ...))
+        local entry = App.phaseTime[phase] or { seconds = 0, units = 0 }
+        entry.seconds = entry.seconds + (os.clock() - started)
+        local n = type(units) == "function" and units(table.unpack(results, 2, results.n)) or units or 0
+        entry.units = entry.units + (tonumber(n) or 0)
+        App.phaseTime[phase] = entry
+        if not results[1] then error(results[2], 0) end
+        return table.unpack(results, 2, results.n)
+    end
+    Rotation.timed = timed
+
     local function info(text)
         App.rotationInfo = text
         G.setStatus(text)
@@ -4596,7 +4642,10 @@ return function(G)
             if tileAt(side.x, side.y) == blockId then
                 soft(token, r.world.name, function() Pnb.breakTile(here, side, blockId, token) end)
             end
-            soft(token, r.world.name, function() Drops.collectNear(here, ids, token, Drops.reach()) end)
+            soft(token, r.world.name, function()
+                local reach = Drops.reach()
+                Drops.collectNear(here, ids, token, { radius = reach.radius, up = reach.up, down = reach.down, onlyIfPresent = true })
+            end)
             local inside = tileAt(side.x, side.y)
             assert(inside == 0 or inside == blockId or inside == seedId,
                 "Tile PNB rotasi terisi item lain di " .. side.x .. ", " .. side.y .. ".")
@@ -4608,6 +4657,8 @@ return function(G)
                 break
             end
         end
+        -- drop dari blok terakhir: tunggu & pungut normal sebelum pindah tahap
+        soft(token, r.world.name, function() Drops.collectNear(here, ids, token, Drops.reach()) end)
         return side
     end
 
@@ -4656,7 +4707,8 @@ return function(G)
         Rotation.saveResume()
         -- Masuk + scan otomatis: tanaman = seed terbanyak di world, Display Box dicari otomatis.
         -- Box tidak wajib: tanpa box yang cocok, rotasi tetap jalan; seed sisa tetap di tas.
-        local setup, why = Harvest.setupWorld(name, token, string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false)
+        local setup, why = timed("masuk & scan world", 1, Harvest.setupWorld, name, token,
+            string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false)
         App.rotationWorlds = App.rotationWorlds or {}
         if not setup then
             App.rotationWorlds[name] = "dilewati: " .. why
@@ -4687,6 +4739,7 @@ return function(G)
             local function full() return count(blockId) >= target and extra <= 0 end
             if not full() then
                 progress("harvest (" .. plan.ripe .. " pohon mateng)")
+                local harvestStart = os.clock()
                 for _, entry in ipairs(plan.rows) do
                     for _, point in ipairs(entry.points) do
                         if full() then break end
@@ -4713,6 +4766,9 @@ return function(G)
                     local last = harvested[#harvested]
                     Drops.collectArea({ world = name, x = last.x, y = last.y }, ids, token, { radius = 4, up = 1.5, down = 1.25 })
                 end
+                local entry = App.phaseTime.harvest or { seconds = 0, units = 0 }
+                entry.seconds, entry.units = entry.seconds + (os.clock() - harvestStart), entry.units + #harvested
+                App.phaseTime.harvest = entry
             end
             total = total + #harvested
             for _, point in ipairs(harvested) do table.insert(pending, point) end
@@ -4722,7 +4778,8 @@ return function(G)
             if count(blockId) > 0 then
                 local before = count(blockId)
                 progress("PNB")
-                local side = Rotation.pnbHere(r, box, blockId, seedId, token, harvested, pending)
+                local side = timed("PNB", function() return before - count(blockId) end,
+                    Rotation.pnbHere, r, box, blockId, seedId, token, harvested, pending)
                 if side then
                     table.insert(pending, side)
                     stats.pnb = stats.pnb + (before - count(blockId))
@@ -4739,7 +4796,7 @@ return function(G)
             local order = Rotation.replantOrder(r, pending, currentY)
             if #order > 0 and count(seedId) > 0 then
                 progress("replant " .. #order .. " tile (atas -> bekas panen -> sisa farm)")
-                local planted = Rotation.replantTiles(r, order, seedId, token)
+                local planted = timed("replant", function(n) return n end, Rotation.replantTiles, r, order, seedId, token)
                 stats.replanted = stats.replanted + planted
             end
             -- Tile yang belum kebagian seed tidak dibawa sebagai prioritas: putaran berikutnya
@@ -4751,7 +4808,7 @@ return function(G)
         end
         -- 4) simpan seed sisa (dan blok kalau masih ada) ke Display Box world ini
         progress("simpan seed sisa ke Display Box")
-        Rotation.storeSeeds(blockId, seedId, 0, token, box)
+        timed("simpan seed", 0, Rotation.storeSeeds, blockId, seedId, 0, token, box)
         plan = Harvest.plan(r, seedId)
         App.rotationWorlds, App.rotationTotals = App.rotationWorlds or {}, App.rotationTotals or {}
         local sum = App.rotationTotals[name] or { harvested = 0, pnb = 0, replanted = 0 }
@@ -5037,6 +5094,34 @@ return function(modules, VERSION)
             end)(),
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | world ke-" .. tostring(App.harvestIndex or "-")
                 .. ", replant " .. tostring(App.config.harvesting.replant),
+            (function()
+                local labels = { { "harvest", "pohon" }, { "PNB", "blok" }, { "replant", "tile" },
+                    { "masuk & scan world", "kali" }, { "simpan seed", nil } }
+                local parts, total = {}, 0
+                for _, info in ipairs(labels) do
+                    local entry = (App.phaseTime or {})[info[1]]
+                    if entry then
+                        total = total + entry.seconds
+                        local text = string.format("%s %.0fd", info[1], entry.seconds)
+                        if info[2] and entry.units > 0 then
+                            text = text .. string.format(" (%d %s, %.2f d/%s)", entry.units, info[2], entry.seconds / entry.units, info[2])
+                        end
+                        table.insert(parts, text)
+                    end
+                end
+                if #parts == 0 then return "Waktu rotasi: -" end
+                for i, info in ipairs(labels) do
+                    local entry = (App.phaseTime or {})[info[1]]
+                    if entry and total > 0 then
+                        for j, part in ipairs(parts) do
+                            if part:sub(1, #info[1] + 1) == info[1] .. " " then
+                                parts[j] = part .. string.format(" = %d%%", math.floor(entry.seconds / total * 100 + 0.5))
+                            end
+                        end
+                    end
+                end
+                return "Waktu rotasi: " .. table.concat(parts, "; ") .. string.format(" | pungut dilewati (tanpa drop) %dx", App.collectSkips or 0)
+            end)(),
             "Jangkauan pungut server: " .. G.Drops.reachText(),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "

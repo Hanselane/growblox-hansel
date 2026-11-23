@@ -66,9 +66,24 @@ return function(G)
     -- Pungut semua drop dengan id di `ids` dalam kotak di sekitar posisi berdiri `anchor`:
     -- |x - tengah| <= radius, dan y dari anchor.y - up sampai anchor.y + down.
     -- Return: tabel { [id] = jumlah yang berhasil dipungut }, dan jumlah drop yang dilewati.
+    -- options.onlyIfPresent = true: kalau di area belum ada drop yang cocok, langsung selesai tanpa
+    -- jeda dan tanpa request inventory (hemat ~0,3-0,5 detik per panggilan di PNB/panen; drop yang
+    -- muncul belakangan terambil di panggilan berikutnya).
     function Drops.collectNear(anchor, ids, token, options)
         options = options or {}
         local radius, up, down = options.radius or 1.25, options.up or 1.5, options.down or 1.25
+        if options.onlyIfPresent then
+            local r, all, any = Bridge.runtime(), ids == "all", false
+            local wanted = {}
+            if not all then for _, id in ipairs(ids) do wanted[id] = true end end
+            for _, drop in pairs(r.world.dropList()) do
+                if type(drop) == "table" and not drop.display and type(drop.n) == "number" and drop.n > 0
+                    and (all or wanted[drop.id]) and type(drop.x) == "number" and type(drop.y) == "number"
+                    and math.abs(drop.x - (anchor.x + 0.5)) <= radius
+                    and drop.y >= anchor.y - up and drop.y <= anchor.y + down then any = true; break end
+            end
+            if not any then App.collectSkips = (App.collectSkips or 0) + 1; return {}, 0 end
+        end
         pause(App.config.options.collectDelay, token)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)

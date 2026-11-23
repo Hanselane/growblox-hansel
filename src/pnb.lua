@@ -148,13 +148,29 @@ return function(G)
     -- grid 5x5. Tile di pinggir grid (2 tile dari karakter) di luar jangkauan server, jadi
     -- karakter melangkah ke sana, memungut, lalu kembali ke posisi PNB.
     local GRID_AREA = { radius = 2.75, up = 3, down = 2.5 }
-    function Pnb.collect(anchor, pickupIds, token)
+    -- quick = true (tiap putaran PNB): kalau belum ada drop di area, lewati tanpa request apa pun.
+    local function anyDrop(anchor, ids, area)
+        local all, wanted = ids == "all", {}
+        if not all then for _, id in ipairs(ids) do wanted[id] = true end end
+        for _, drop in pairs(Bridge.runtime().world.dropList()) do
+            if type(drop) == "table" and not drop.display and type(drop.n) == "number" and drop.n > 0
+                and (all or wanted[drop.id]) and type(drop.x) == "number" and type(drop.y) == "number"
+                and math.abs(drop.x - (anchor.x + 0.5)) <= area.radius
+                and drop.y >= anchor.y - area.up and drop.y <= anchor.y + area.down then return true end
+        end
+        return false
+    end
+    function Pnb.collect(anchor, pickupIds, token, quick)
         local ids, area = pickupIds, GRID_AREA
         if App.config.options.autoCollect then
             local range = App.config.options.collectRange
             ids = "all"
             area = { radius = math.max(GRID_AREA.radius, range), up = math.max(GRID_AREA.up, range),
                 down = math.max(GRID_AREA.down, range) }
+        end
+        if quick and not anyDrop(anchor, ids, area) then
+            App.collectSkips = (App.collectSkips or 0) + 1
+            return
         end
         local got = Drops.collectArea(anchor, ids, token, area)
         local n = 0
@@ -269,7 +285,7 @@ return function(G)
             end
             assert(worked, "Semua tile PNB terhalang blok lain. Kosongkan tile yang dipilih atau pilih tile lain.")
             G.setStatus("Collecting gems, seeds, and returned blocks...")
-            Pnb.collect(anchor, pickupIds, token)
+            Pnb.collect(anchor, pickupIds, token, true)
         end
     end
 

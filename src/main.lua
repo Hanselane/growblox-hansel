@@ -160,6 +160,34 @@ return function(modules, VERSION)
             end)(),
             "Harvest: " .. tostring(App.harvestPlan or "-") .. " | world ke-" .. tostring(App.harvestIndex or "-")
                 .. ", replant " .. tostring(App.config.harvesting.replant),
+            (function()
+                local labels = { { "harvest", "pohon" }, { "PNB", "blok" }, { "replant", "tile" },
+                    { "masuk & scan world", "kali" }, { "simpan seed", nil } }
+                local parts, total = {}, 0
+                for _, info in ipairs(labels) do
+                    local entry = (App.phaseTime or {})[info[1]]
+                    if entry then
+                        total = total + entry.seconds
+                        local text = string.format("%s %.0fd", info[1], entry.seconds)
+                        if info[2] and entry.units > 0 then
+                            text = text .. string.format(" (%d %s, %.2f d/%s)", entry.units, info[2], entry.seconds / entry.units, info[2])
+                        end
+                        table.insert(parts, text)
+                    end
+                end
+                if #parts == 0 then return "Waktu rotasi: -" end
+                for i, info in ipairs(labels) do
+                    local entry = (App.phaseTime or {})[info[1]]
+                    if entry and total > 0 then
+                        for j, part in ipairs(parts) do
+                            if part:sub(1, #info[1] + 1) == info[1] .. " " then
+                                parts[j] = part .. string.format(" = %d%%", math.floor(entry.seconds / total * 100 + 0.5))
+                            end
+                        end
+                    end
+                end
+                return "Waktu rotasi: " .. table.concat(parts, "; ") .. string.format(" | pungut dilewati (tanpa drop) %dx", App.collectSkips or 0)
+            end)(),
             "Jangkauan pungut server: " .. G.Drops.reachText(),
             "Stock terakhir: " .. tostring(App.stockDebug or "-"),
             "Auto collect: " .. (App.config and App.config.options.autoCollect and "on" or "off") .. ", jangkauan "
