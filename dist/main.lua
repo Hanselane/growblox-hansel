@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.7. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.7"
+-- Growblox Hansel v0.6.8. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.8"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -21,7 +21,7 @@ Core.LIMITS = {
     moveTimeout = { 5, 90, 30 }, seedThreshold = { 1, 200, 200 },
     collectRange = { 0.5, 5, 2 },
 }
-Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false }
+Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true }
 
 local function finite(n)
     return type(n) == "number" and n == n and math.abs(n) < math.huge -- n == n menolak NaN
@@ -3069,6 +3069,7 @@ return function(G)
         pcall(function() s:Section({ Title = "Settings" }) end)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
+            { "autoReconnect", "Auto reconnect", "Kena disconnect (layar 'Disconnected' / 'Reconnect'): masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik), lalu task yang punya checkpoint dilanjutkan." },
             { "autoRejoin", "Rejoin world and return to PNB & Harvest", "Keluar ke world picker, avatar mati, atau pindah server: masuk lagi ke world task (PNB: balik ke spot; Harvest: world farm, scan ulang, lanjut panen). Juga lanjut Planting dari checkpoint." },
         }) do
             local key = info[1]
@@ -3079,6 +3080,7 @@ return function(G)
                         Net.idle()
                         App.config.options[key] = value == true
                         if key == "antiAFK" and value then G.installAntiAFK() end
+                        if key == "autoReconnect" and value then G.installReconnect() end
                         State.saveSession()
                     end)
                     if not ok then
@@ -5092,6 +5094,7 @@ return function(modules, VERSION)
         end
         if previous.window then pcall(function() previous.window:Destroy() end) end
         if previous.idleConnection then pcall(function() previous.idleConnection:Disconnect() end) end
+        if previous.reconnectConnection then pcall(function() previous.reconnectConnection:Disconnect() end) end
     end
 
     -- 2) App = seluruh state yang hidup selama script jalan.
@@ -5253,6 +5256,7 @@ return function(modules, VERSION)
             "Loader: " .. tostring(env.GrowbloxHanselLoaderDebug or "lokal / tidak diketahui"),
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
+            "Auto reconnect: " .. (App.config.options.autoReconnect and "on" or "off") .. "; " .. tostring(App.reconnectInfo or "-"),
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
                 .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
                 .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),
@@ -5355,8 +5359,50 @@ return function(modules, VERSION)
         return true
     end
 
+    -- Auto reconnect: Roblox menampilkan layar error/disconnect (GuiService.ErrorMessageChanged).
+    -- Simpan antrean auto-resume (queue_on_teleport), lalu teleport masuk lagi ke Growblox. Gagal =
+    -- coba lagi tiap 15 detik, maks 5x. Setelah masuk, task yang punya checkpoint dilanjutkan.
+    function G.installReconnect()
+        if App.reconnectConnection then return true end
+        local okService, GuiService = pcall(function() return game:GetService("GuiService") end)
+        local okTeleport, TeleportService = pcall(function() return game:GetService("TeleportService") end)
+        if not okService or not okTeleport then App.reconnectInfo = "service tidak tersedia"; return false end
+        local busy = false
+        local function rejoin(message)
+            if busy or not App.alive or not App.config.options.autoReconnect then return end
+            if type(message) ~= "string" or message == "" then return end
+            busy = true
+            App.reconnectInfo = os.date("%H:%M:%S") .. " disconnect: " .. message:sub(1, 80)
+            pcall(G.State.saveSession)
+            task.spawn(function()
+                for attempt = 1, 5 do
+                    if not App.alive or not App.config.options.autoReconnect then break end
+                    G.env.GrowbloxHanselAutoResume = nil
+                    App.queued = false
+                    pcall(G.Movement.queueResume) -- setelah masuk lagi, script dimuat & task dilanjutkan
+                    App.reconnectInfo = os.date("%H:%M:%S") .. " reconnect " .. attempt .. "/5 (" .. message:sub(1, 60) .. ")"
+                    G.setStatus("Disconnect. Masuk lagi ke Growblox (" .. attempt .. "/5)...")
+                    pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+                    task.wait(15)
+                end
+                busy = false
+            end)
+        end
+        local connected, connection = pcall(function()
+            return GuiService.ErrorMessageChanged:Connect(rejoin)
+        end)
+        if not connected then App.reconnectInfo = "gagal pasang: " .. tostring(connection); return false end
+        App.reconnectConnection = connection
+        App.reconnectInfo = App.reconnectInfo or "siap"
+        -- Layar error sudah tampil sebelum script jalan? Tangani juga.
+        local okMessage, current = pcall(function() return GuiService:GetErrorMessage() end)
+        if okMessage and type(current) == "string" and current ~= "" then rejoin(current) end
+        return true
+    end
+
     function G.unload()
         if not App.alive then return end
+        if App.reconnectConnection then pcall(function() App.reconnectConnection:Disconnect() end); App.reconnectConnection = nil end
         if App.idleConnection then pcall(function() App.idleConnection:Disconnect() end); App.idleConnection = nil end
         if App.job then pcall(G.Jobs.stop) end
         pcall(G.Movement.releaseControls)
@@ -5370,6 +5416,7 @@ return function(modules, VERSION)
     local restored, problem = pcall(G.State.restoreSession)
     if not restored then G.setStatus("Session lama nggak bisa dibaca: " .. tostring(problem)) end
     if App.config.options.antiAFK then G.installAntiAFK() end
+    if App.config.options.autoReconnect then G.installReconnect() end
 
     local function loadWindUI()
         if type(env.GrowbloxHanselWindUI) == "table" then return env.GrowbloxHanselWindUI end

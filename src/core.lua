@@ -15,7 +15,7 @@ Core.LIMITS = {
     moveTimeout = { 5, 90, 30 }, seedThreshold = { 1, 200, 200 },
     collectRange = { 0.5, 5, 2 },
 }
-Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false }
+Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true }
 
 local function finite(n)
     return type(n) == "number" and n == n and math.abs(n) < math.huge -- n == n menolak NaN
