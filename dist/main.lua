@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.6. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.6"
+-- Growblox Hansel v0.6.7. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.7"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -3055,6 +3055,7 @@ return function(G)
             else print(text); G.notify("Diagnostics dicetak ke console.") end
         end })
         UI.buildSettings(s)
+        UI.buildAutostart(s)
         s:Button({ Title = "Unload script", Callback = function() G.unload() end })
         UI.log = s:Paragraph({ Title = "Aktivitas terakhir", Desc = "-" })
         return window
@@ -3105,6 +3106,40 @@ return function(G)
                     if not ok then G.notify("Stop task dulu sebelum mengubah setting.") end
                 end })
         end
+    end
+
+    -- Auto-start: script pendek untuk folder autoexec executor. Executor menjalankannya tiap kali
+    -- masuk game (termasuk setelah mental ke world picker / rejoin, saat queue_on_teleport tidak
+    -- terpanggil), lalu task yang punya checkpoint dilanjutkan otomatis.
+    function UI.autostartScript()
+        local pinned = tostring(G.env and G.env.GrowbloxHanselLoaderURL or "")
+        local main = pinned:gsub("releases/loader%-[%w]+%.lua$", "loader.lua")
+        if main == "" or not main:match("^https://") then
+            main = "https://raw.githubusercontent.com/Hanselane/growblox-hansel/main/loader.lua"
+        end
+        return table.concat({
+            "-- Growblox Hansel auto-start (taruh di folder autoexec executor)",
+            "if not game:IsLoaded() then game.Loaded:Wait() end",
+            "task.wait(3)",
+            "-- sudah dimuat lewat queue_on_teleport / manual? jangan jalan dobel",
+            "if getgenv().GrowbloxHanselLoading or getgenv().GrowbloxHanselApp then return end",
+            "getgenv().GrowbloxHanselAutoResume = true",
+            "loadstring(game:HttpGet(" .. string.format("%q", main) .. "))()",
+        }, "\n")
+    end
+    function UI.buildAutostart(s)
+        pcall(function() s:Section({ Title = "Auto-start" }) end)
+        s:Paragraph({ Title = "Auto-start setelah mental / rejoin",
+            Desc = "Kalau setelah keluar ke world picker script tidak jalan sendiri, pasang auto-start: tekan tombol di bawah, "
+                .. "lalu tempel isinya ke file baru di folder autoexec executor (Delta: folder Autoexecute). Tiap masuk game, "
+                .. "script dimuat dan task yang punya checkpoint (Rotation, Harvest, PNB) dilanjutkan; dari world picker script "
+                .. "masuk sendiri ke world tujuan. Tanpa checkpoint, script cuma terbuka seperti biasa." })
+        s:Button({ Title = "Copy script auto-start", Callback = function()
+            local copy = G.exec and G.exec.setclipboard
+            local text = UI.autostartScript()
+            if type(copy) == "function" then copy(text); G.notify("Script auto-start di-copy.")
+            else print(text); G.notify("Executor tidak mendukung copy; script dicetak ke console.") end
+        end })
     end
 
     -- Dipanggil berkala dari main.lua.

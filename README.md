@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.6.6**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.6.7**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -285,6 +285,16 @@ Hit delay dan batas seed ada di tab Place & Break.
 Mental keluar world (ke world picker, ke world lain, atau karakter hilang sesaat) dianggap bisa dipulihkan, bukan alasan berhenti: task masuk lagi ke world-nya lalu lanjut (PNB balik ke spot, Harvest/Rotation scan ulang lalu lanjut). Kalau script dimuat ulang setelah mental/pindah server dan masih di world picker, script tetap tersambung dari picker (menunggu game sampai ~2 menit) dan task-nya sendiri yang masuk ke world tujuan. Kalau di world picker game belum memuat world sama sekali (diagnostics `World tables: 0`, `Qz attribute: missing`), script mengetik nama world tujuan task (dari checkpoint) ke kotak **World Name** lalu menekan Enter / **Enter World** sendiri (maks 3x), baru menyambung dan melanjutkan task. Cara yang dipakai tercatat di diagnostics (`Tahap startup ... masuk lewat picker`).
 
 Pindah server saat PNB: kalau executor punya `queue_on_teleport`, script dimuat ulang otomatis di server baru dan PNB dilanjutkan dari checkpoint (spot PNB tersimpan, berlaku 6 jam). Diagnostics menampilkan baris `Anti-AFK` dan `Rejoin & balik ke PNB/Harvest` (berapa kali masuk ulang per task).
+
+### Auto-start (kalau script tidak jalan sendiri setelah mental)
+
+Auto-resume biasa memakai `queue_on_teleport`: cuma jalan kalau game pindah server lewat teleport. Kalau lo mental lalu masuk lagi ke game dengan cara lain (rejoin), script tidak dimuat ulang dan task berhenti. Solusinya **auto-start**:
+
+1. Settings → **Copy script auto-start**.
+2. Tempel isinya ke file baru (misal `GrowbloxHansel.lua`) di folder **autoexec** executor (Delta: folder `Autoexecute`).
+3. Tiap masuk game, executor menjalankan script itu: Growblox Hansel dimuat, lalu task yang punya checkpoint (Rotation, Harvest, PNB, maks 6 jam) dilanjutkan. Dari world picker, script mengetik world tujuan dan menekan Enter World sendiri.
+
+Kalau script sudah dimuat lewat `queue_on_teleport` atau manual, auto-start tidak menjalankan ulang (tidak dobel). Tanpa checkpoint, script cuma terbuka seperti biasa.
 
 ## Menyambung ke game
 

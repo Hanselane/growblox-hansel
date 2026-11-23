@@ -8,6 +8,7 @@ __FILES__
 }
 
 local env = getgenv and getgenv() or _G
+env.GrowbloxHanselLoading = true -- tanda buat script auto-start: sudah ada yang memuat, jangan dobel
 local running = env.GrowbloxHanselApp
 if running and running.alive and (running.job or (running.pending or 0) > 0) then
     error("Stop task yang lagi jalan dulu, baru load ulang.", 0)
