@@ -481,11 +481,19 @@ return function(G)
             if ok then
                 -- World ketemu, tapi tunggu avatar benar-benar siap sebelum dianggap tersambung.
                 local body = result.body
-                local state = body and body.state()
                 local inWorld = result.world.name ~= nil and result.world.name ~= "" and not Bridge.pickerOpen(result)
-                if inWorld and (not body or (state.active and not state.dead)) then
+                if inWorld and (not body or Bridge.avatarReady(result)) then
                     App.runtime, App.connectionError = result, nil
                     App.connectAttempts = attempt
+                    return result
+                end
+                -- allowPicker: tetap tersambung walau masih di world picker / karakter belum muncul,
+                -- asal hook masuk world ada. Dipakai saat melanjutkan task setelah mental/pindah server:
+                -- task-nya sendiri yang masuk ke world tujuan.
+                if options.allowPicker and type(result.world.enter) == "function" then
+                    App.runtime, App.connectionError = result, nil
+                    App.connectAttempts = attempt
+                    result.connectedInPicker = not inWorld
                     return result
                 end
                 result = inWorld and "Your character is not ready yet." or "Still in the world picker. Enter a world first."
@@ -504,6 +512,19 @@ return function(G)
     end
 
     ---------------------------------------------------------------- cek kondisi
+    -- Status avatar yang aman dibaca: nil kalau karakter belum ada / sedang hilang (keluar world,
+    -- mati, respawn). Membaca status saat itu bisa error ("attempt to index nil"); di sini ditangkap.
+    function Bridge.avatarState(r)
+        if not r or not r.body then return nil end
+        local ok, state = pcall(r.body.state)
+        if ok and type(state) == "table" then return state end
+        return nil
+    end
+    function Bridge.avatarReady(r)
+        local state = Bridge.avatarState(r)
+        return state ~= nil and state.active and not state.dead and true or false
+    end
+
     function Bridge.runtime()
         assert(App.runtime, App.connectionError or "Belum tersambung ke game. Pakai Reconnect di Settings.")
         return App.runtime
@@ -521,24 +542,27 @@ return function(G)
     function Bridge.position()
         local r = Bridge.runtime()
         assert(r.body, "Hook avatar tidak ada. Copy diagnostics di Settings.")
-        local state = r.body.state()
-        assert(state.active and not state.dead, "Masuk ke world dan tunggu karakter siap.")
+        local state = Bridge.avatarState(r)
+        if not state or not state.active or state.dead then
+            error(Bridge.recoverable("Menunggu avatar siap.", r.world and r.world.name, "avatar"), 0)
+        end
         return state
     end
     -- Dipanggil sebelum aksi penting: masih di world yang benar, avatar hidup, tidak di-freeze.
     function Bridge.worldCheck(name, token)
         if token then Net.checkpoint(token) end
         local r = Bridge.runtime()
-        if r.world.name == nil or r.world.name == "" or Bridge.pickerOpen(r) then
-            error(Bridge.recoverable("Kembali ke world picker.", name, "worldPicker"), 0)
+        local current = type(r.world) == "table" and r.world.name or nil
+        if current == nil or current == "" or Bridge.pickerOpen(r) then
+            error(Bridge.recoverable("Keluar ke world picker.", name, "worldPicker"), 0)
         end
-        assert(name == nil or r.world.name == name, "World berubah. Stop demi keamanan posisi tersimpan.")
+        -- Mental ke world lain: bisa dipulihkan (task masuk lagi ke world-nya), bukan stop.
+        if name ~= nil and current ~= name then
+            error(Bridge.recoverable("Pindah ke world " .. tostring(current) .. " (seharusnya " .. name .. ").", name, "worldChanged"), 0)
+        end
         assert(not G.frozen(), "Karakter di-freeze.")
-        if r.body then
-            local state = r.body.state()
-            if not state.active or state.dead then
-                error(Bridge.recoverable("Menunggu avatar siap.", name, "avatar"), 0)
-            end
+        if r.body and not Bridge.avatarReady(r) then
+            error(Bridge.recoverable("Menunggu avatar siap.", name, "avatar"), 0)
         end
         return r
     end

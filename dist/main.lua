@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.4. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.4"
+-- Growblox Hansel v0.6.5. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.5"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -1372,11 +1372,19 @@ return function(G)
             if ok then
                 -- World ketemu, tapi tunggu avatar benar-benar siap sebelum dianggap tersambung.
                 local body = result.body
-                local state = body and body.state()
                 local inWorld = result.world.name ~= nil and result.world.name ~= "" and not Bridge.pickerOpen(result)
-                if inWorld and (not body or (state.active and not state.dead)) then
+                if inWorld and (not body or Bridge.avatarReady(result)) then
                     App.runtime, App.connectionError = result, nil
                     App.connectAttempts = attempt
+                    return result
+                end
+                -- allowPicker: tetap tersambung walau masih di world picker / karakter belum muncul,
+                -- asal hook masuk world ada. Dipakai saat melanjutkan task setelah mental/pindah server:
+                -- task-nya sendiri yang masuk ke world tujuan.
+                if options.allowPicker and type(result.world.enter) == "function" then
+                    App.runtime, App.connectionError = result, nil
+                    App.connectAttempts = attempt
+                    result.connectedInPicker = not inWorld
                     return result
                 end
                 result = inWorld and "Your character is not ready yet." or "Still in the world picker. Enter a world first."
@@ -1395,6 +1403,19 @@ return function(G)
     end
 
     ---------------------------------------------------------------- cek kondisi
+    -- Status avatar yang aman dibaca: nil kalau karakter belum ada / sedang hilang (keluar world,
+    -- mati, respawn). Membaca status saat itu bisa error ("attempt to index nil"); di sini ditangkap.
+    function Bridge.avatarState(r)
+        if not r or not r.body then return nil end
+        local ok, state = pcall(r.body.state)
+        if ok and type(state) == "table" then return state end
+        return nil
+    end
+    function Bridge.avatarReady(r)
+        local state = Bridge.avatarState(r)
+        return state ~= nil and state.active and not state.dead and true or false
+    end
+
     function Bridge.runtime()
         assert(App.runtime, App.connectionError or "Belum tersambung ke game. Pakai Reconnect di Settings.")
         return App.runtime
@@ -1412,24 +1433,27 @@ return function(G)
     function Bridge.position()
         local r = Bridge.runtime()
         assert(r.body, "Hook avatar tidak ada. Copy diagnostics di Settings.")
-        local state = r.body.state()
-        assert(state.active and not state.dead, "Masuk ke world dan tunggu karakter siap.")
+        local state = Bridge.avatarState(r)
+        if not state or not state.active or state.dead then
+            error(Bridge.recoverable("Menunggu avatar siap.", r.world and r.world.name, "avatar"), 0)
+        end
         return state
     end
     -- Dipanggil sebelum aksi penting: masih di world yang benar, avatar hidup, tidak di-freeze.
     function Bridge.worldCheck(name, token)
         if token then Net.checkpoint(token) end
         local r = Bridge.runtime()
-        if r.world.name == nil or r.world.name == "" or Bridge.pickerOpen(r) then
-            error(Bridge.recoverable("Kembali ke world picker.", name, "worldPicker"), 0)
+        local current = type(r.world) == "table" and r.world.name or nil
+        if current == nil or current == "" or Bridge.pickerOpen(r) then
+            error(Bridge.recoverable("Keluar ke world picker.", name, "worldPicker"), 0)
         end
-        assert(name == nil or r.world.name == name, "World berubah. Stop demi keamanan posisi tersimpan.")
+        -- Mental ke world lain: bisa dipulihkan (task masuk lagi ke world-nya), bukan stop.
+        if name ~= nil and current ~= name then
+            error(Bridge.recoverable("Pindah ke world " .. tostring(current) .. " (seharusnya " .. name .. ").", name, "worldChanged"), 0)
+        end
         assert(not G.frozen(), "Karakter di-freeze.")
-        if r.body then
-            local state = r.body.state()
-            if not state.active or state.dead then
-                error(Bridge.recoverable("Menunggu avatar siap.", name, "avatar"), 0)
-            end
+        if r.body and not Bridge.avatarReady(r) then
+            error(Bridge.recoverable("Menunggu avatar siap.", name, "avatar"), 0)
         end
         return r
     end
@@ -1862,8 +1886,7 @@ return function(G)
                 nextEntry, stableSince = os.clock() + 2, nil
                 deadline = os.clock() + App.config.options.actionTimeout + 15
             end
-            local avatar = r.body and r.body.state()
-            if r.world.name == name and not Bridge.pickerOpen(r) and avatar and avatar.active and not avatar.dead
+            if r.world.name == name and not Bridge.pickerOpen(r) and (not r.body or Bridge.avatarReady(r))
                 and not G.frozen() then
                 stableSince = stableSince or os.clock()
                 if os.clock() - stableSince >= (options.moving and 0 or 1) then break end
@@ -1881,22 +1904,33 @@ return function(G)
     -- Error biasa saat aksi bisa jadi efek keluar world / avatar mati yang belum kelihatan
     -- (classifyPNBFault Clarissv). Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error
     -- "recoverable" supaya task bisa masuk lagi ke world. Dipakai PNB dan Harvest.
+    -- Error apa pun (termasuk "attempt to index nil" karena world/karakter hilang) yang ternyata
+    -- akibat keluar world, pindah world, atau avatar mati -> "recoverable". Membaca status game di sini
+    -- juga dijaga: kalau gagal dibaca, anggap sedang keluar world (bukan alasan untuk stop).
     function Movement.classifyFault(problem, token, name)
         if type(problem) == "table" and problem.recoverable then return problem end
         if tostring(problem):find("Stopped", 1, true) then return problem end
-        Movement.releaseControls()
+        pcall(Movement.releaseControls)
         local deadline = os.clock() + 1.5
         repeat
             checkpoint(token)
-            local r = Bridge.runtime()
-            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
-                return Bridge.recoverable("Keluar ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+            local ok, verdict = pcall(function()
+                local r = Bridge.runtime()
+                local current = type(r.world) == "table" and r.world.name or nil
+                if current == "" or current == nil or Bridge.pickerOpen(r) then
+                    return Bridge.recoverable("Keluar ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+                end
+                if name and current ~= name then
+                    return Bridge.recoverable("Pindah ke world " .. tostring(current) .. " saat aksi: " .. tostring(problem), name, "worldChanged")
+                end
+                if r.body and not Bridge.avatarReady(r) then
+                    return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
+                end
+            end)
+            if not ok then
+                return Bridge.recoverable("Status game tidak terbaca (" .. tostring(verdict) .. ") saat aksi: " .. tostring(problem), name, "unreadable")
             end
-            if r.world.name ~= name then return problem end
-            local state = r.body and r.body.state()
-            if state and (not state.active or state.dead) then
-                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
-            end
+            if verdict then return verdict end
             if os.clock() >= deadline then return problem end
             pause(0.1, token)
         until false
@@ -2513,7 +2547,10 @@ return function(G)
             local completed, problem = pcall(opts.loop, token, resume)
             if completed then return end
             Net.checkpoint(token)
-            problem = Movement.classifyFault(problem, token, opts.world())
+            local classified, verdict = pcall(Movement.classifyFault, problem, token, opts.world())
+            if classified then problem = verdict
+            elseif tostring(verdict):find("Stopped", 1, true) then error(verdict, 0)
+            else problem = G.Bridge.recoverable("Status game tidak terbaca: " .. tostring(problem), opts.world(), "unreadable") end
             local left = type(problem) == "table" and problem.recoverable
             if left and not App.config.options.autoRejoin then error(problem, 0) end
             if not left and not opts.anyError then error(problem, 0) end
@@ -5080,13 +5117,18 @@ return function(modules, VERSION)
     G.Rotation = modules.rotation(G)
     App.config = G.Core.defaults()
 
-    function G.connect()
+    -- resuming = true: script dimuat ulang untuk melanjutkan task (setelah mental / pindah server).
+    -- Tunggu game lebih lama (sampai ~2 menit) dan boleh tersambung dari world picker, karena
+    -- task-nya sendiri yang akan masuk lagi ke world tujuan.
+    function G.connect(resuming)
         G.setStatus("Menyambung ke game...")
-        local r = G.Bridge.connect({ attempts = 8, delay = 4, onRetry = function(attempt, total, message)
-            G.setStatus("World belum siap (" .. message .. "). Coba lagi " .. attempt .. "/" .. (total - 1) .. "...")
-        end })
-        G.setStatus(r.ready and ("Tersambung ke " .. r.world.name .. ".")
-            or ("Tersambung ke " .. r.world.name .. ", tapi ada hook yang hilang. Cek diagnostics."))
+        local r = G.Bridge.connect({ attempts = resuming and 30 or 8, delay = 4, allowPicker = true,
+            onRetry = function(attempt, total, message)
+                G.setStatus("World belum siap (" .. message .. "). Coba lagi " .. attempt .. "/" .. (total - 1) .. "...")
+            end })
+        local where = r.connectedInPicker and "world picker" or tostring(r.world.name)
+        G.setStatus(r.ready and ("Tersambung ke " .. where .. ".")
+            or ("Tersambung ke " .. where .. ", tapi ada hook yang hilang. Cek diagnostics."))
         for _, handler in ipairs(G.onConnected) do pcall(handler, r) end
         return r
     end
@@ -5242,7 +5284,7 @@ return function(modules, VERSION)
         while App.alive and ReplicatedStorage:GetAttribute("Qz") == nil and os.clock() < deadline do task.wait(0.25) end
         if not App.alive then return end
         App.configuring = true
-        local ok, message = pcall(G.connect)
+        local ok, message = pcall(G.connect, env.GrowbloxHanselAutoResume == true)
         App.configuring = false
         if not ok then
             G.setStatus(tostring(message))

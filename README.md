@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.6.4**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.6.5**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -281,6 +281,8 @@ Diadaptasi dari tab Settings Claris Growblox v0.1.43. Setting cuma bisa diubah s
 | **Batas waktu jalan** | 30 dtk | Perjalanan karakter yang lebih lama dari ini dianggap gagal. |
 
 Hit delay dan batas seed ada di tab Place & Break.
+
+Mental keluar world (ke world picker, ke world lain, atau karakter hilang sesaat) dianggap bisa dipulihkan, bukan alasan berhenti: task masuk lagi ke world-nya lalu lanjut (PNB balik ke spot, Harvest/Rotation scan ulang lalu lanjut). Kalau script dimuat ulang setelah mental/pindah server dan masih di world picker, script tetap tersambung dari picker (menunggu game sampai ~2 menit) dan task-nya sendiri yang masuk ke world tujuan.
 
 Pindah server saat PNB: kalau executor punya `queue_on_teleport`, script dimuat ulang otomatis di server baru dan PNB dilanjutkan dari checkpoint (spot PNB tersimpan, berlaku 6 jam). Diagnostics menampilkan baris `Anti-AFK` dan `Rejoin & balik ke PNB/Harvest` (berapa kali masuk ulang per task).
 

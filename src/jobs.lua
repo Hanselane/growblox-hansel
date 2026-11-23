@@ -64,7 +64,10 @@ return function(G)
             local completed, problem = pcall(opts.loop, token, resume)
             if completed then return end
             Net.checkpoint(token)
-            problem = Movement.classifyFault(problem, token, opts.world())
+            local classified, verdict = pcall(Movement.classifyFault, problem, token, opts.world())
+            if classified then problem = verdict
+            elseif tostring(verdict):find("Stopped", 1, true) then error(verdict, 0)
+            else problem = G.Bridge.recoverable("Status game tidak terbaca: " .. tostring(problem), opts.world(), "unreadable") end
             local left = type(problem) == "table" and problem.recoverable
             if left and not App.config.options.autoRejoin then error(problem, 0) end
             if not left and not opts.anyError then error(problem, 0) end

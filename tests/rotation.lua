@@ -263,6 +263,60 @@ T.test("Blok sudah >= target & tidak ada tile kosong di samping -> panen 2 pohon
     T.eq(laps >= 1, true, "putaran selesai (tidak macet)")
     T.eq((sim.server[BLOCK] or 0) < 6, true, "blok awal 10 sudah di-PNB (sisa < target): " .. tostring(sim.server[BLOCK]))
 end)
+T.test("Mental keluar world saat PNB (world nil + karakter hilang) -> masuk lagi, lanjut rotasi", function()
+    local sim = setup()
+    local entered = 0
+    local enter = sim.world.enter
+    sim.world.enter = function(name) entered = entered + 1; return enter(name) end
+    local state = sim.App.runtime.body.state
+    sim.G.Jobs.start("rotation")
+    sim.S.run(20, 0.025) -- sedang PNB / panen
+    sim.world.name = nil
+    sim.App.runtime.body.state = function() error("attempt to index nil with 'HumanoidRootPart'") end
+    sim.S.run(1, 0.025)
+    sim.App.runtime.body.state = state -- karakter muncul lagi di world picker; script harus masuk sendiri
+    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 1500)
+    local job = sim.App.job
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(job, "rotation", "rotasi masih jalan")
+    T.eq(entered >= 1, true, "masuk lagi ke world rotasi")
+    for x = 2, 9 do T.eq(sim.world.fg[8][x], SEED, "x " .. x .. " tetap selesai") end
+end)
+T.test("Mental ke world lain (bukan picker) -> masuk lagi ke world rotasi, lanjut", function()
+    local sim = setup()
+    local entered = 0
+    local enter = sim.world.enter
+    sim.world.enter = function(name) entered = entered + 1; return enter(name) end
+    sim.G.Jobs.start("rotation")
+    sim.S.run(20, 0.025)
+    sim.world.name = "LOBBY"
+    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 1500)
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(entered >= 1, true, "masuk lagi ke FARM")
+    T.eq(sim.world.name, "FARM")
+end)
+T.test("Resume dari world picker (script dimuat ulang setelah mental): masuk world rotasi lalu lanjut", function()
+    local sim = setup()
+    local config = Core.validate(sim.App.config)
+    sim.world.name = "" -- masih di world picker
+    sim.G.State.loadCheckpoint = function(name)
+        if name == "rotation" then return { config = config, profile = "Default", data = { worldIndex = 1 } } end
+    end
+    T.eq(pcall(sim.G.Rotation.resume), true, "resume bisa dimulai dari picker")
+    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 1500)
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.world.name, "FARM")
+    T.eq(tostring(sim.App.rotationWorlds.FARM):find("total dipanen 8", 1, true) ~= nil, true, tostring(sim.App.rotationWorlds.FARM))
+end)
 T.test("Resume rotation: lanjut dari world tersimpan", function()
     local sim = setup({ worlds = { "FARM", "FARM2" } })
     local config = Core.validate(sim.App.config)

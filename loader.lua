@@ -1,10 +1,10 @@
--- Growblox Hansel loader v0.6.4. File ini DIBUAT OTOMATIS oleh build.mjs dari loader.template.lua.
+-- Growblox Hansel loader v0.6.5. File ini DIBUAT OTOMATIS oleh build.mjs dari loader.template.lua.
 -- Cara pakai di executor:
 --   loadstring(game:HttpGet("<BASE>loader.lua"))()
 local BASE = "https://raw.githubusercontent.com/Hanselane/growblox-hansel/main/"
-local RELEASE = "39fe4246a93f850b0662"
+local RELEASE = "1bb5b9806fc15cede3fa"
 local FILES = {
-    main = { path = "releases/39fe4246a93f850b0662/main.lua", size = 282836, sum = 2918240767 },
+    main = { path = "releases/1bb5b9806fc15cede3fa/main.lua", size = 285691, sum = 3493154468 },
     windui = { path = "releases/windui-0e4a423c92d91599087e.lua", size = 1350010, sum = 1511812659 },
 }
 
@@ -77,7 +77,7 @@ assert(windui, problem)
 env.GrowbloxHanselWindUI = windui()
 -- Auto-resume setelah pindah server memakai salinan loader INI (path permanen per versi), bukan
 -- main/loader.lua. Path main bisa kena cache GitHub 5 menit dan memuat versi lama.
-env.GrowbloxHanselLoaderURL = BASE .. "releases/loader-63104d347eaad0958945.lua"
+env.GrowbloxHanselLoaderURL = BASE .. "releases/loader-3e30a7d3e6d842c0ab9d.lua"
 env.GrowbloxHanselLoaderDebug = "Rilis " .. RELEASE .. ": main " .. results.main[3] .. ", WindUI " .. results.windui[3]
 
 local chunk

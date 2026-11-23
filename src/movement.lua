@@ -319,8 +319,7 @@ return function(G)
                 nextEntry, stableSince = os.clock() + 2, nil
                 deadline = os.clock() + App.config.options.actionTimeout + 15
             end
-            local avatar = r.body and r.body.state()
-            if r.world.name == name and not Bridge.pickerOpen(r) and avatar and avatar.active and not avatar.dead
+            if r.world.name == name and not Bridge.pickerOpen(r) and (not r.body or Bridge.avatarReady(r))
                 and not G.frozen() then
                 stableSince = stableSince or os.clock()
                 if os.clock() - stableSince >= (options.moving and 0 or 1) then break end
@@ -338,22 +337,33 @@ return function(G)
     -- Error biasa saat aksi bisa jadi efek keluar world / avatar mati yang belum kelihatan
     -- (classifyPNBFault Clarissv). Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error
     -- "recoverable" supaya task bisa masuk lagi ke world. Dipakai PNB dan Harvest.
+    -- Error apa pun (termasuk "attempt to index nil" karena world/karakter hilang) yang ternyata
+    -- akibat keluar world, pindah world, atau avatar mati -> "recoverable". Membaca status game di sini
+    -- juga dijaga: kalau gagal dibaca, anggap sedang keluar world (bukan alasan untuk stop).
     function Movement.classifyFault(problem, token, name)
         if type(problem) == "table" and problem.recoverable then return problem end
         if tostring(problem):find("Stopped", 1, true) then return problem end
-        Movement.releaseControls()
+        pcall(Movement.releaseControls)
         local deadline = os.clock() + 1.5
         repeat
             checkpoint(token)
-            local r = Bridge.runtime()
-            if r.world.name == "" or r.world.name == nil or Bridge.pickerOpen(r) then
-                return Bridge.recoverable("Keluar ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+            local ok, verdict = pcall(function()
+                local r = Bridge.runtime()
+                local current = type(r.world) == "table" and r.world.name or nil
+                if current == "" or current == nil or Bridge.pickerOpen(r) then
+                    return Bridge.recoverable("Keluar ke world picker saat aksi: " .. tostring(problem), name, "worldPicker")
+                end
+                if name and current ~= name then
+                    return Bridge.recoverable("Pindah ke world " .. tostring(current) .. " saat aksi: " .. tostring(problem), name, "worldChanged")
+                end
+                if r.body and not Bridge.avatarReady(r) then
+                    return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
+                end
+            end)
+            if not ok then
+                return Bridge.recoverable("Status game tidak terbaca (" .. tostring(verdict) .. ") saat aksi: " .. tostring(problem), name, "unreadable")
             end
-            if r.world.name ~= name then return problem end
-            local state = r.body and r.body.state()
-            if state and (not state.active or state.dead) then
-                return Bridge.recoverable("Avatar tidak aktif saat aksi: " .. tostring(problem), name, "avatar")
-            end
+            if verdict then return verdict end
             if os.clock() >= deadline then return problem end
             pause(0.1, token)
         until false

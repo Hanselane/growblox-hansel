@@ -104,13 +104,18 @@ return function(modules, VERSION)
     G.Rotation = modules.rotation(G)
     App.config = G.Core.defaults()
 
-    function G.connect()
+    -- resuming = true: script dimuat ulang untuk melanjutkan task (setelah mental / pindah server).
+    -- Tunggu game lebih lama (sampai ~2 menit) dan boleh tersambung dari world picker, karena
+    -- task-nya sendiri yang akan masuk lagi ke world tujuan.
+    function G.connect(resuming)
         G.setStatus("Menyambung ke game...")
-        local r = G.Bridge.connect({ attempts = 8, delay = 4, onRetry = function(attempt, total, message)
-            G.setStatus("World belum siap (" .. message .. "). Coba lagi " .. attempt .. "/" .. (total - 1) .. "...")
-        end })
-        G.setStatus(r.ready and ("Tersambung ke " .. r.world.name .. ".")
-            or ("Tersambung ke " .. r.world.name .. ", tapi ada hook yang hilang. Cek diagnostics."))
+        local r = G.Bridge.connect({ attempts = resuming and 30 or 8, delay = 4, allowPicker = true,
+            onRetry = function(attempt, total, message)
+                G.setStatus("World belum siap (" .. message .. "). Coba lagi " .. attempt .. "/" .. (total - 1) .. "...")
+            end })
+        local where = r.connectedInPicker and "world picker" or tostring(r.world.name)
+        G.setStatus(r.ready and ("Tersambung ke " .. where .. ".")
+            or ("Tersambung ke " .. where .. ", tapi ada hook yang hilang. Cek diagnostics."))
         for _, handler in ipairs(G.onConnected) do pcall(handler, r) end
         return r
     end
@@ -266,7 +271,7 @@ return function(modules, VERSION)
         while App.alive and ReplicatedStorage:GetAttribute("Qz") == nil and os.clock() < deadline do task.wait(0.25) end
         if not App.alive then return end
         App.configuring = true
-        local ok, message = pcall(G.connect)
+        local ok, message = pcall(G.connect, env.GrowbloxHanselAutoResume == true)
         App.configuring = false
         if not ok then
             G.setStatus(tostring(message))
