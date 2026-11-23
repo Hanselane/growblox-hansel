@@ -277,6 +277,7 @@ return function(G)
         G.Jobs.toggles.harvest = tab:Toggle({ Title = "Harvest", Value = false,
             Desc = "Panen semua world di list satu kali jalan.",
             Callback = function(enabled) G.Jobs.setRunning("harvest", enabled) end })
+        Scan.buildGrowscan(tab)
         syncing = false
         Harvest.refreshTab()
         table.insert(G.onConnected, function() pcall(Harvest.refreshTab) end)

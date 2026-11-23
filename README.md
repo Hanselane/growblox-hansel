@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.6.3**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.6.4**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -14,6 +14,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 - [Tab di jendela](#tab-di-jendela)
 - [Place & Break](#place--break)
 - [Planting](#planting)
+- [Growscan](#growscan)
 - [Scan world otomatis](#scan-world-otomatis)
 - [Harvest](#harvest)
 - [Rotation](#rotation)
@@ -34,6 +35,7 @@ Alur yang dituju setelah semua fitur jadi: **tanam semua farm → PNB selama poh
 | Auto Collect | Place & Break | Selesai (v0.3.4), dites offline |
 | Planting | Planting | Selesai (v0.2.0), dites offline |
 | Scan world otomatis | Harvest, Rotation | v0.6.0: tanaman & Display Box dideteksi sendiri tiap world |
+| Growscan (scan manual semua item) | Harvest | v0.6.4, dites offline |
 | Harvest (Fist) + Replant during harvest | Harvest | v0.4.0, dites offline |
 | Rotation (harvest → PNB → replant, multi world) | Rotation | v0.5.0, dites offline |
 
@@ -175,6 +177,20 @@ Sebelum masuk world, progress disimpan: world ke berapa, baris terakhir, tile ya
 Kalau tidak lanjut otomatis, jalankan loader lagi lalu tekan **Resume planting**. Checkpoint berlaku 6 jam.
 
 Kalau task berhenti saat **mengambil seed dari box**, script menolak resume karena tidak tahu apakah seed sudah masuk tas. Cek tas dan box, lalu tekan **Clear saved planting** dan mulai lagi.
+
+## Growscan
+
+Tombol **Scan world (Growscan)** di tab **Harvest** men-scan world yang sedang lo masuki, mirip Growscan di Growtopia. Semua dibaca dari memori game, tanpa request ke server, dan hasilnya tampil lengkap (tanpa batas daftar):
+
+| Bagian | Isi |
+| --- | --- |
+| Pohon | Per jenis seed: jumlah, mateng, tumbuh, kapan semuanya mateng |
+| Floating | Semua item yang melayang, per jenis |
+| Blok | Semua blok di world, per jenis |
+| Display Box | Isi tiap box |
+| Total item | Floating + isi semua Display Box per jenis, contoh `Sugar Cane (954): 1362 (floating 1240, box 122)` |
+
+**Copy hasil Growscan** menyalin hasilnya ke clipboard (kalau executor mendukung); hasil terakhir juga ikut ke **Copy diagnostics**. Batasan: hanya world yang sedang dimasuki, dan hasilnya snapshot.
 
 ## Scan world otomatis
 

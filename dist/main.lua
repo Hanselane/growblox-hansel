@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.3"
+-- Growblox Hansel v0.6.4. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.4"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -2794,7 +2794,10 @@ return function(G)
     end
 
     -- Scan world sekarang. Return: daftar baris laporan (juga disimpan di App.scanReport).
-    function Scan.run()
+    -- full = true (tombol Growscan): semua item tanpa batas daftar, plus total gabungan
+    -- (floating + isi Display Box). Tanpa full (scan otomatis Harvest/Rotation): diringkas.
+    function Scan.run(full)
+        local limit = full and math.huge or 12
         local r = Bridge.worldCheck(nil)
         local world, items = r.world, r.items
         local blocks, trees, seedTiles, boxes = {}, {}, {}, {}
@@ -2863,32 +2866,70 @@ return function(G)
         table.insert(lines, "FLOATING:")
         local floatList = sortedCounts(floating)
         if #floatList == 0 then table.insert(lines, "  (kosong)") end
-        for i = 1, math.min(#floatList, 12) do
+        for i = 1, math.min(#floatList, limit) do
             table.insert(lines, "  " .. itemName(r, floatList[i].id) .. ": " .. floatList[i].n)
         end
         if hidden > 0 then table.insert(lines, "  (" .. hidden .. " drop bertanda display tidak dihitung)") end
 
         table.insert(lines, "BLOK:")
         local blockList = sortedCounts(blocks)
-        for i = 1, math.min(#blockList, 12) do
+        for i = 1, math.min(#blockList, limit) do
             table.insert(lines, "  " .. itemName(r, blockList[i].id) .. ": " .. blockList[i].n)
         end
 
         table.insert(lines, "DISPLAY BOX: " .. #boxes)
-        for i = 1, math.min(#boxes, 6) do
-            local box = boxes[i]
+        local stored = {}
+        for i, box in ipairs(boxes) do
             local ok, rows = pcall(function() return world.displays.get(box.x, box.y) end)
             local parts = {}
             if ok and type(rows) == "table" then
                 for _, row in pairs(rows) do
-                    if type(row) == "table" then table.insert(parts, itemName(r, row[1]) .. " " .. tostring(row[2])) end
+                    if type(row) == "table" and type(row[1]) == "number" and type(row[2]) == "number" then
+                        table.insert(parts, itemName(r, row[1]) .. " " .. tostring(row[2]))
+                        stored[row[1]] = (stored[row[1]] or 0) + row[2]
+                    end
                 end
             end
-            table.insert(lines, string.format("  %d,%d: %s", box.x, box.y, #parts > 0 and table.concat(parts, ", ") or "kosong"))
+            if i <= (full and math.huge or 6) then
+                table.insert(lines, string.format("  %d,%d: %s", box.x, box.y, #parts > 0 and table.concat(parts, ", ") or "kosong"))
+            end
+        end
+        if full then
+            -- Total item yang bisa diambil di world ini: floating + isi semua Display Box.
+            local totals = {}
+            for id, n in pairs(floating) do totals[id] = (totals[id] or 0) + n end
+            for id, n in pairs(stored) do totals[id] = (totals[id] or 0) + n end
+            table.insert(lines, "TOTAL ITEM (floating + Display Box):")
+            local totalList = sortedCounts(totals)
+            if #totalList == 0 then table.insert(lines, "  (kosong)") end
+            for _, entry in ipairs(totalList) do
+                table.insert(lines, string.format("  %s: %d (floating %d, box %d)", itemName(r, entry.id), entry.n,
+                    floating[entry.id] or 0, stored[entry.id] or 0))
+            end
         end
         App.scanReport = lines
         App.scanTrees = trees
         return lines
+    end
+
+    -- Tombol Growscan: scan lengkap world yang sedang dimasuki (dipasang di tab Harvest).
+    function Scan.buildGrowscan(tab)
+        local UI = G.UI
+        pcall(function() tab:Section({ Title = "Growscan" }) end)
+        local result = tab:Paragraph({ Title = "Growscan", Desc = "Scan semua item di world ini: pohon (mateng/tumbuh), item floating, blok, isi semua Display Box, dan totalnya. Dibaca dari memori game, tanpa request ke server." })
+        tab:Button({ Title = "Scan world (Growscan)", Callback = function()
+            local ok, lines = pcall(Scan.run, true)
+            local text = ok and table.concat(lines, "\n") or ("Scan gagal: " .. tostring(lines))
+            UI.paragraph(result, "Growscan", text)
+            G.setStatus(ok and ("Growscan selesai: " .. tostring(Bridge.runtime().world.name)) or text)
+        end })
+        tab:Button({ Title = "Copy hasil Growscan", Callback = function()
+            local copy = G.exec and G.exec.setclipboard
+            if not App.scanReport then G.notify("Scan world dulu."); return end
+            if type(copy) ~= "function" then G.notify("Executor tidak mendukung copy; hasil ada di Copy diagnostics."); return end
+            copy(table.concat(App.scanReport, "\n"))
+            G.notify("Hasil Growscan disalin.")
+        end })
     end
 
     return Scan
@@ -4494,6 +4535,7 @@ return function(G)
         G.Jobs.toggles.harvest = tab:Toggle({ Title = "Harvest", Value = false,
             Desc = "Panen semua world di list satu kali jalan.",
             Callback = function(enabled) G.Jobs.setRunning("harvest", enabled) end })
+        Scan.buildGrowscan(tab)
         syncing = false
         Harvest.refreshTab()
         table.insert(G.onConnected, function() pcall(Harvest.refreshTab) end)
