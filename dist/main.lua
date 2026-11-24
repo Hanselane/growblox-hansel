@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.8. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.8"
+-- Growblox Hansel v0.6.9. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.6.9"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -5440,6 +5440,14 @@ return function(modules, VERSION)
         if not App.alive then return end
         -- Dimuat ulang (auto-resume) tapi masih di world picker dan game belum memuat world sama
         -- sekali (Qz belum ada, world table 0): masuk ke world tujuan task lewat UI picker dulu.
+        -- Sedang melanjutkan task: antrekan auto-resume SEKARANG. Masuk world dari picker (atau
+        -- apa pun selama resume) bisa pindah server; tanpa antrean ini script tidak dimuat di server
+        -- baru dan rotasi berhenti di world picker.
+        if env.GrowbloxHanselAutoResume then
+            App.queued = false
+            local queued = pcall(G.Movement.queueResume)
+            App.pickerEntry = App.pickerEntry or (queued and App.queued and "antrean auto-resume siap" or "queue_on_teleport tidak tersedia")
+        end
         if env.GrowbloxHanselAutoResume and ReplicatedStorage:GetAttribute("Qz") == nil then
             local target = G.Jobs.resumeTargetWorld()
             for attempt = 1, 3 do
