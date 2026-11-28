@@ -313,22 +313,44 @@ return function(G)
                     refreshResume()
                     local tree = point(state.plan[state.cursor])
                     seedOverflow(r, box, blockId, seedId, token, nil, nil)
-                    local done = false
-                    local ok = soft(token, name, function()
-                        done = Harvest.harvestTree(r, tree, seedId, plan.resolver, token)
-                    end)
-                    -- sukses / pohon sudah tidak ada -> lanjut; gagal 2x di pohon yang sama -> lewati
-                    state.failed = ok and 0 or (state.failed or 0) + 1
-                    if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + 1, 0 end
-                    if ok and done then
-                        soft(token, name, function()
-                            Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.reach())
+                    if App.config.options.fastHarvest then
+                        -- panen cepat sambil jalan: ambil beberapa pohon sekaligus, secukupnya untuk
+                        -- mendekati target blok (perkiraan aman 4 blok/pohon supaya tidak kelebihan)
+                        local need = math.max(1, math.ceil((target - count(blockId)) / 4), state.extra or 0)
+                        local chunk = {}
+                        for i = state.cursor, math.min(#state.plan, state.cursor + math.min(12, need) - 1) do
+                            table.insert(chunk, point(state.plan[i]))
+                        end
+                        local ok = soft(token, name, function()
+                            Harvest.harvestPass(r, chunk, seedId, plan.resolver, token, ids, function(done)
+                                table.insert(state.pending, { done.x, done.y })
+                                stats.harvested, got = stats.harvested + 1, got + 1
+                                harvestedNow = harvestedNow + 1
+                                if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
+                            end)
                         end)
-                        table.insert(state.pending, { tree.x, tree.y })
-                        stats.harvested, got = stats.harvested + 1, got + 1
-                        harvestedNow = harvestedNow + 1
-                        if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
-                        if got % 10 == 0 then save() end
+                        state.failed = ok and 0 or (state.failed or 0) + 1
+                        if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + #chunk, 0 end
+                        refreshInventory(token)
+                        save()
+                    else
+                        local done = false
+                        local ok = soft(token, name, function()
+                            done = Harvest.harvestTree(r, tree, seedId, plan.resolver, token)
+                        end)
+                        -- sukses / pohon sudah tidak ada -> lanjut; gagal 2x di pohon yang sama -> lewati
+                        state.failed = ok and 0 or (state.failed or 0) + 1
+                        if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + 1, 0 end
+                        if ok and done then
+                            soft(token, name, function()
+                                Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.reach())
+                            end)
+                            table.insert(state.pending, { tree.x, tree.y })
+                            stats.harvested, got = stats.harvested + 1, got + 1
+                            harvestedNow = harvestedNow + 1
+                            if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
+                            if got % 10 == 0 then save() end
+                        end
                     end
                 end
                 if #state.pending > 0 then

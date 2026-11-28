@@ -77,6 +77,7 @@ return function(G)
         pcall(function() s:Section({ Title = "Settings" }) end)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
+            { "fastHarvest", "Panen cepat (ping tinggi)", "Harvest/Rotation: pohon satu baris dipukul sambil jalan tanpa berhenti di tiap pohon, drop dipungut sambil jalan. Pohon yang gagal otomatis diulang cara biasa. Matikan kalau banyak pohon terlewat." },
             { "respawnStore", "Respawn ke Display Box dekat pintu", "Tas penuh saat Harvest/Rotation dan Display Box ada di dekat pintu putih (maks 8 tile): respawn ke pintu lalu simpan, bukan jalan jauh. Box jauh dari pintu = tetap jalan." },
             { "autoReconnect", "Auto reconnect", "Kena disconnect (layar 'Disconnected' / 'Reconnect'): masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik), lalu task yang punya checkpoint dilanjutkan." },
             { "autoRejoin", "Rejoin world and return to PNB & Harvest", "Keluar ke world picker, avatar mati, atau pindah server: masuk lagi ke world task (PNB: balik ke spot; Harvest: world farm, scan ulang, lanjut panen). Juga lanjut Planting dari checkpoint." },

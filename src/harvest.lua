@@ -106,7 +106,13 @@ return function(G)
             tries = tries + 1
             assert(tries <= 3, "Fist tidak berhasil memanen pohon di " .. point.x .. ", " .. point.y .. ". Cek akses world.")
             r.handlers.hit(point.x, point.y)
-            pause(math.max(0.25, App.config.options.punchDelay), token)
+            -- Tunggu jawaban server (ping tinggi bisa > 0,25 detik) sebelum memukul lagi, supaya
+            -- tidak memukul dobel lalu dianggap gagal. Maks ~1,2 detik per pukulan.
+            pause(math.max(0.1, App.config.options.punchDelay * 0.5), token)
+            for _ = 1, 22 do
+                if tileAt(point.x, point.y) ~= seedId then break end
+                pause(0.05, token)
+            end
         until tileAt(point.x, point.y) ~= seedId
         App.stats.trees = (App.stats.trees or 0) + 1
         return true
@@ -156,6 +162,93 @@ return function(G)
 
     Harvest.store, Harvest.replant, Harvest.harvestTree, Harvest.duration = store, replant, harvestTree, duration
 
+    ---------------------------------------------------------------- panen cepat (ping tinggi)
+    -- Pohon berurutan di baris yang sama dipanen SAMBIL JALAN: karakter berjalan ke pohon terakhir
+    -- grup tanpa berhenti di tiap pohon; tiap pohon dipukul saat karakter sudah 1 tile darinya
+    -- (tanpa menunggu jawaban server). Di ujung grup: tunggu jawaban server, pohon yang masih ada
+    -- dipanen cara biasa (dikonfirmasi), lalu sisa drop dipungut. Drop yang dilewati terambil oleh
+    -- pickup bawaan game. onTree(point) dipanggil untuk tiap pohon yang terpanen.
+    -- Return: jumlah pohon terpanen.
+    local HIT_RANGE = 1.1
+    function Harvest.harvestPass(r, points, seedId, resolver, token, ids, onTree)
+        local name, total, index = r.world.name, 0, 1
+        while index <= #points do
+            checkpoint(token)
+            -- grup = pohon berurutan di baris yang sama, jarak antar pohon maks 3 tile
+            local group = { points[index] }
+            while points[index + #group] and points[index + #group].y == group[1].y
+                and math.abs(points[index + #group].x - group[#group].x) <= 3
+                and (#group < 2 or (points[index + #group].x - group[#group].x) * (group[#group].x - group[#group - 1].x) > 0) do
+                table.insert(group, points[index + #group])
+            end
+            index = index + #group
+            local live = {}
+            for _, point in ipairs(group) do
+                if tileAt(point.x, point.y) == seedId and resolver.ripe(point.x, point.y, seedId) then table.insert(live, point) end
+            end
+            if #live > 0 then
+                local hit, sweep = {}, Drops.sweeper(name, ids, token)
+                local function strike(state)
+                    sweep.step(state)
+                    for _, point in ipairs(live) do
+                        local key = point.x .. ":" .. point.y
+                        if not hit[key] and math.abs(state.y - (point.y + 1)) < 0.35
+                            and math.abs(state.x - (point.x + 0.5)) <= HIT_RANGE and tileAt(point.x, point.y) == seedId then
+                            r.handlers.hit(point.x, point.y)
+                            hit[key] = true
+                        end
+                    end
+                    return true
+                end
+                -- mulai dari ujung grup yang paling dekat karakter, lalu sapu ke ujung satunya
+                local here = Bridge.position()
+                if math.abs(here.x - (live[1].x + 0.5)) > math.abs(here.x - (live[#live].x + 0.5)) then
+                    local reversed = {}
+                    for i = #live, 1, -1 do table.insert(reversed, live[i]) end
+                    live = reversed
+                end
+                local last = live[#live]
+                Movement.moveTo(live[1].x, live[1].y, name, token, strike)
+                Movement.moveTo(last.x, last.y, name, token, strike)
+                strike(Bridge.position())
+                -- tunggu jawaban server untuk pukulan terakhir (maks ~1,2 detik)
+                for _ = 1, 24 do
+                    local waiting = false
+                    for _, point in ipairs(live) do
+                        if hit[point.x .. ":" .. point.y] and tileAt(point.x, point.y) == seedId then waiting = true; break end
+                    end
+                    if not waiting then break end
+                    pause(0.05, token)
+                end
+                for _, point in ipairs(live) do
+                    local done = tileAt(point.x, point.y) ~= seedId
+                    if done then
+                        App.stats.trees = (App.stats.trees or 0) + 1
+                    else
+                        done = harvestTree(r, point, seedId, resolver, token) -- ditolak / belum kena: cara biasa
+                        App.fastHarvestRetries = (App.fastHarvestRetries or 0) + 1
+                    end
+                    if done then
+                        total = total + 1
+                        if onTree then onTree(point) end
+                    end
+                end
+                local first = live[1]
+                local anchor = { world = name, x = math.floor((first.x + last.x) / 2), y = last.y }
+                local area = { radius = math.abs(last.x - first.x) / 2 + 1.5, up = 1.5, down = 1.25 }
+                -- drop muncul di belakang karakter (ping): sapu balik sambil pungut, tanpa berhenti
+                sweep.step(Bridge.position())
+                if sweep.pending(anchor, area) and first ~= last then
+                    Movement.moveTo(first.x, first.y, name, token, function(state) sweep.step(state); return true end)
+                    sweep.step(Bridge.position())
+                end
+                sweep.finish()
+                if sweep.pending(anchor, area) then Drops.collectArea(anchor, ids, token, area) end
+            end
+        end
+        return total
+    end
+
     ---------------------------------------------------------------- panen satu world
     function Harvest.runWorld(index, token, save)
         local name = App.config.harvesting.worlds[index]
@@ -174,6 +267,8 @@ return function(G)
             plan.growing > 0 and (" (semua mateng dalam " .. duration(plan.longest) .. ")") or "", box.x, box.y)
         App.harvestPlan = name .. ": " .. summary
         if plan.ripe == 0 then
+            -- hasil panen sebelum mental/keluar world masih di tas -> tetap disimpan ke box
+            if count(blockId) > 0 then store(blockId, seedId, 0, token, box) end
             App.harvestWorlds[name] = "belum ada yang mateng; " .. summary
             return 0
         end
@@ -183,6 +278,17 @@ return function(G)
             local row = entry.row
             G.setStatus(string.format("Harvest %s (%d/%d): baris %d, %d pohon mateng...", name, index,
                 #App.config.harvesting.worlds, row.y, #entry.points))
+            if App.config.options.fastHarvest and not replantOn then
+                -- panen cepat sambil jalan, per potongan 20 pohon (cek tas penuh di antaranya)
+                for start = 1, #entry.points, 20 do
+                    checkpoint(token)
+                    if r.inventory:room(blockId) < 70 or r.inventory:room(seedId) < 30 then store(blockId, seedId, 0, token, box) end
+                    local chunk = {}
+                    for i = start, math.min(#entry.points, start + 19) do table.insert(chunk, entry.points[i]) end
+                    trees = trees + Harvest.harvestPass(r, chunk, seedId, plan.resolver, token, ids)
+                end
+                entry.points = {}
+            end
             for _, point in ipairs(entry.points) do
                 checkpoint(token)
                 -- Tas hampir penuh: simpan dulu ke box world ini, lalu lanjut dari pohon ini.
