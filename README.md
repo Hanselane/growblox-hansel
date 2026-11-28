@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.7.4**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.7.5**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 

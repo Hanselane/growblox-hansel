@@ -106,13 +106,7 @@ return function(G)
             tries = tries + 1
             assert(tries <= 3, "Fist tidak berhasil memanen pohon di " .. point.x .. ", " .. point.y .. ". Cek akses world.")
             r.handlers.hit(point.x, point.y)
-            -- Tunggu jawaban server (ping tinggi bisa > 0,25 detik) sebelum memukul lagi, supaya
-            -- tidak memukul dobel lalu dianggap gagal. Maks ~1,2 detik per pukulan.
-            pause(math.max(0.1, App.config.options.punchDelay * 0.5), token)
-            for _ = 1, 22 do
-                if tileAt(point.x, point.y) ~= seedId then break end
-                pause(0.05, token)
-            end
+            pause(math.max(0.25, App.config.options.punchDelay), token)
         until tileAt(point.x, point.y) ~= seedId
         App.stats.trees = (App.stats.trees or 0) + 1
         return true
@@ -203,7 +197,7 @@ return function(G)
                 if harvestTree(r, point, seedId, plan.resolver, token) then
                     trees = trees + 1
                     -- Pukul sambil collect: pungut hasil pohon ini dari tempat berdiri sebelum lanjut.
-                    Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, replantOn and Drops.reach() or Drops.treeReach())
+                    Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.reach())
                     if replantOn and replant(r, point, seedId, token) then replanted = replanted + 1 end
                 end
             end

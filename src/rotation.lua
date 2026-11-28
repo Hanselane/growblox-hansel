@@ -323,7 +323,7 @@ return function(G)
                     if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + 1, 0 end
                     if ok and done then
                         soft(token, name, function()
-                            Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.treeReach())
+                            Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.reach())
                         end)
                         table.insert(state.pending, { tree.x, tree.y })
                         stats.harvested, got = stats.harvested + 1, got + 1

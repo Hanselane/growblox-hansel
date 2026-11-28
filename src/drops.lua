@@ -87,12 +87,7 @@ return function(G)
         pause(App.config.options.collectDelay, token)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)
-            -- options.lazyInventory (panen per pohon): tidak minta inventory ke server sebelum &
-            -- sesudah pungut (2 round-trip per pohon). Sesudah pungut inventory diminta di latar
-            -- belakang, selesai sendiri selagi karakter jalan ke pohon berikutnya.
-            if not options.lazyInventory then
-                Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
-            end
+            Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
             -- ids = "all" -> semua item (Auto Collect). options.attempts boleh dibawa antar panggilan
             -- supaya drop yang terus ditolak server (kejauhan) tidak di-spam.
             local attempts, retryAt, deadline = options.attempts or {}, {}, os.clock() + App.config.options.actionTimeout
@@ -141,17 +136,7 @@ return function(G)
                         end
                     end
                     if accepted then
-                        if options.lazyInventory then
-                            if not App.inventoryRefreshing then
-                                App.inventoryRefreshing = true
-                                Net.beginRequest(function()
-                                    pcall(Actions.refreshInventory, token)
-                                    App.inventoryRefreshing = false
-                                end)
-                            end
-                        else
-                            Actions.refreshInventory(token)
-                        end
+                        Actions.refreshInventory(token)
                         deadline = os.clock() + App.config.options.actionTimeout
                     end
                 end
@@ -181,11 +166,6 @@ return function(G)
     -- Jangkauan pungut server Growblox: bawaan dari Clarissv collectDrops (1.25 tile ke samping,
     -- 1.5 ke atas, 1.25 ke bawah). Kalau server terbukti menerima lebih jauh, pakai jarak itu (maks 5).
     Drops.REACH = { radius = 1.25, up = 1.5, down = 1.25 }
-    -- Jangkauan pungut untuk panen per pohon: tanpa minta inventory tiap pohon (lihat lazyInventory).
-    function Drops.treeReach()
-        local reach = Drops.reach()
-        return { radius = reach.radius, up = reach.up, down = reach.down, lazyInventory = true }
-    end
     function Drops.reach()
         local learned = math.min(5, App.reach.okMax)
         if learned <= Drops.REACH.radius then return Drops.REACH end
