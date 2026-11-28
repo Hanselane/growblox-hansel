@@ -104,6 +104,8 @@ return function(modules, VERSION)
     G.Pnb = modules.pnb(G)
     G.Harvest = modules.harvest(G)
     G.Rotation = modules.rotation(G)
+    G.httpGet = G.httpGet or function(url) return game:HttpGet(url) end
+    G.Update = modules.update(G)
     App.config = G.Core.defaults()
 
     -- resuming = true: script dimuat ulang untuk melanjutkan task (setelah mental / pindah server).
@@ -190,6 +192,7 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Auto reconnect: " .. (App.config.options.autoReconnect and "on" or "off") .. "; " .. tostring(App.reconnectInfo or "-"),
+            "Auto update: " .. (App.config.options.autoUpdate and "on" or "off") .. "; " .. tostring(App.update and App.update.info),
             "Panen cepat: " .. (App.config.options.fastHarvest and "on" or "off") .. "; diulang cara biasa " .. tostring(App.fastHarvestRetries or 0) .. " pohon",
             "Respawn ke box: " .. (App.config.options.respawnStore and "on" or "off") .. "; dipakai " .. tostring(App.respawnCount or 0)
                 .. "x; terakhir " .. tostring(App.respawnInfo or "-"),
@@ -353,6 +356,12 @@ return function(modules, VERSION)
     if not restored then G.setStatus("Session lama nggak bisa dibaca: " .. tostring(problem)) end
     if App.config.options.antiAFK then G.installAntiAFK() end
     if App.config.options.autoReconnect then G.installReconnect() end
+    pcall(G.Update.install)
+    if env.GrowbloxHanselUpdatedFrom then
+        G.setStatus("Auto update: " .. tostring(env.GrowbloxHanselUpdatedFrom) .. " -> " .. VERSION .. ".")
+        App.update.info = "diupdate dari " .. tostring(env.GrowbloxHanselUpdatedFrom)
+        env.GrowbloxHanselUpdatedFrom = nil
+    end
 
     local function loadWindUI()
         if type(env.GrowbloxHanselWindUI) == "table" then return env.GrowbloxHanselWindUI end

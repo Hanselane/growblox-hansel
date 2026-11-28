@@ -145,6 +145,34 @@ return function(G)
         return token
     end
 
+    -- Jeda task untuk update: simpan checkpoint, hentikan task TANPA menghapus checkpoint, tunggu
+    -- task benar-benar berhenti & request server selesai. Return: mode yang dijeda (nil kalau tidak
+    -- ada task), atau false + alasan kalau task ini tidak bisa dilanjutkan otomatis.
+    function Jobs.suspend(maxWait)
+        local mode = App.job
+        if not mode then return nil end
+        local spec = Jobs.specs[mode]
+        if not (spec and spec.resume and spec.save) then return false, (spec and spec.label or mode) .. " tidak punya checkpoint" end
+        local saved, issue = pcall(spec.save)
+        if not saved then return false, "checkpoint gagal disimpan: " .. tostring(issue) end
+        App.token = App.token + 1
+        App.teleporting, App.recovering = false, false
+        local deadline = os.clock() + (maxWait or 20)
+        while (App.job or App.pending > 0) and os.clock() < deadline do task.wait(0.1) end
+        Movement.releaseControls()
+        Jobs.syncToggles()
+        if App.job or App.pending > 0 then return false, "task belum berhenti" end
+        return mode
+    end
+    -- Lanjutkan checkpoint yang ada (dipakai kalau update batal setelah task dijeda).
+    function Jobs.resumeSaved()
+        for _, handler in ipairs(G.resumeHandlers) do
+            local found, resumed = pcall(handler)
+            if found and resumed then return true end
+        end
+        return false
+    end
+
     -- Stop: token naik, jadi loop task berhenti di checkpoint berikutnya. Checkpoint semua fitur dihapus.
     function Jobs.stop()
         App.token = App.token + 1

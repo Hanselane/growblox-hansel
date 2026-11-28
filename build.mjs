@@ -16,7 +16,7 @@ const VERSION = pkg.version;
 const { user, repo, branch } = pkg.github;
 const BASE = `https://raw.githubusercontent.com/${user}/${repo}/${branch}/`;
 // Urutan penting: modul yang dipakai modul lain ditulis duluan.
-const MODULES = ["core", "navigation", "net", "state", "bridge", "actions", "movement", "storage", "drops", "jobs", "scan", "ui", "plant", "pnb", "harvest", "rotation", "main"];
+const MODULES = ["core", "navigation", "net", "state", "bridge", "actions", "movement", "storage", "drops", "jobs", "scan", "ui", "plant", "pnb", "harvest", "rotation", "update", "main"];
 
 // Adler-32: checksum ringan. Versi Lua-nya ada di loader, hasilnya harus sama persis.
 export function adler32(text) {
@@ -71,5 +71,7 @@ writeFileSync("loader.lua", loader);
 if (!existsSync(selfPath)) writeFileSync(selfPath, loader);
 else if (readFileSync(selfPath, "utf8") !== loader) throw new Error(`${selfPath} sudah ada dengan isi berbeda`);
 
+// Dibaca fitur auto update di script yang sedang jalan (src/update.lua).
+writeFileSync("latest.json", JSON.stringify({ version: VERSION, release, loader: selfPath }, null, 2) + "\n");
 console.log(`v${VERSION} rilis ${release} | main ${size(main)} byte | loader -> ${BASE}loader.lua`);
 if (user === "USERNAME") console.log("PERINGATAN: isi github.user di package.json dengan username GitHub lo, lalu build ulang.");

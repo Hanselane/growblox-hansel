@@ -335,6 +335,7 @@ return function(G)
 
     G.Jobs.register("harvest", {
         label = "Harvest",
+        save = function() Harvest.saveResume() end,
         prepare = function(r)
             assert(r.body and r.controls and r.handlers and type(r.handlers.hit) == "function",
                 "Hook pukul/gerak tidak tersedia. Copy diagnostics dari Settings.")

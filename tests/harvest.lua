@@ -281,5 +281,81 @@ T.test("blockForSeed: seed 41 -> blok 40", function()
     T.eq(Core.blockForSeed(fake.items, 41), 40)
 end)
 
+-- Auto update saat Harvest jalan: checkpoint disimpan (tidak dihapus), task berhenti, loader baru
+-- dijalankan dengan AutoResume. Loader gagal -> versi lama melanjutkan task lagi.
+local function updateSim(loaderSource)
+    local sim = setup()
+    local G = sim.G
+    G.VERSION = "0.7.3"
+    G.env.GrowbloxHanselLoaderURL = "https://raw.githubusercontent.com/Hanselane/growblox-hansel/abc123/releases/loader-old.lua"
+    local fetched = {}
+    G.httpGet = function(url)
+        table.insert(fetched, url)
+        if url:find("latest.json", 1, true) then return "LATEST" end
+        return loaderSource
+    end
+    G.json.decode = function(text)
+        if text == "LATEST" then return { version = "0.7.4", loader = "releases/loader-new.lua" } end
+        return {}
+    end
+    local saves, clears = 0, 0
+    local save, clear = G.State.saveCheckpoint, G.State.clearCheckpoint
+    G.State.saveCheckpoint = function(name, ...) if name == "harvest" then saves = saves + 1 end; return save(name, ...) end
+    G.State.clearCheckpoint = function(name, ...) if name == "harvest" then clears = clears + 1 end; return clear(name, ...) end
+    G.Update = module("update")(G)
+    return sim, fetched, function() return saves, clears end
+end
+T.test("Auto update saat Harvest jalan -> checkpoint disimpan, task dijeda, versi baru dimuat dengan AutoResume", function()
+    local sim, fetched, counts = updateSim("getgenv_ran = (getgenv_ran or 0) + 1")
+    local G = sim.G
+    sim.G.Jobs.start("harvest")
+    sim.S.run(2, 0.025)
+    T.eq(sim.App.job, "harvest")
+    local _, clearsBefore = counts()
+    local result
+    sim.S.task.spawn(function() result = G.Update.tick(false) end)
+    sim.S.run(30, 0.025)
+    sim.S.restore()
+    local saves, clears = counts()
+    T.eq(result, "update ke 0.7.4")
+    T.eq(getgenv_ran, 1, "loader baru dijalankan sekali")
+    T.eq(fetched[2], "https://raw.githubusercontent.com/Hanselane/growblox-hansel/main/releases/loader-new.lua", "loader dari branch main")
+    T.eq(sim.App.job, nil, "task lama berhenti")
+    T.eq(saves > 0, true, "checkpoint disimpan")
+    T.eq(clears, clearsBefore, "checkpoint tidak dihapus")
+    T.eq(G.env.GrowbloxHanselAutoResume, true, "versi baru melanjutkan task")
+    T.eq(G.env.GrowbloxHanselUpdatedFrom, "0.7.3")
+end)
+T.test("Auto update: loader baru error -> versi lama hidup lagi dan task dilanjutkan", function()
+    local sim, _, _ = updateSim("error('rusak')")
+    local G = sim.G
+    local resumed = 0
+    G.Jobs.resumeSaved = function() resumed = resumed + 1; return true end
+    sim.G.Jobs.start("harvest")
+    sim.S.run(2, 0.025)
+    local result
+    sim.S.task.spawn(function() result = G.Update.tick(false) end)
+    sim.S.run(30, 0.025)
+    sim.S.restore()
+    T.eq(tostring(result):find("gagal dimuat", 1, true) ~= nil, true, tostring(result))
+    T.eq(resumed, 1, "task dilanjutkan lagi")
+    T.eq(G.env.GrowbloxHanselAutoResume, nil)
+    T.eq(sim.App.alive, true)
+end)
+T.test("Auto update ditunda saat task tanpa checkpoint (Planting) & versi sama tidak diupdate", function()
+    local sim = updateSim("x = 1")
+    local G = sim.G
+    sim.App.job = "plant"
+    G.Jobs.specs.plant = { label = "Planting" }
+    local _, why = G.Update.apply({ version = "0.7.4", url = "https://x/loader.lua" })
+    T.eq(why, "Planting ditunggu selesai")
+    sim.App.job = nil
+    G.VERSION = "0.7.4"
+    T.eq(G.Update.tick(false), "sudah terbaru (0.7.4)")
+    T.eq(G.Update.newer("0.7.10", "0.7.9"), true)
+    T.eq(G.Update.newer("0.7.3", "0.7.3"), false)
+    sim.S.restore()
+end)
+
 print(string.format("\n%d lolos, %d gagal", T.passed, T.failed))
 return T.failed

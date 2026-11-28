@@ -465,6 +465,7 @@ return function(G)
 
     G.Jobs.register("rotation", {
         label = "Rotation",
+        save = function() Rotation.saveResume() end,
         prepare = function(r)
             assert(r.body and r.controls and r.handlers and type(r.handlers.hit) == "function"
                 and type(r.handlers.setTile) == "function" and type(r.handlers.plantSeed) == "function",

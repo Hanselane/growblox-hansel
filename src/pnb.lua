@@ -291,6 +291,7 @@ return function(G)
 
     G.Jobs.register("pnb", {
         label = "Place & Break",
+        save = function() Pnb.saveResume() end,
         prepare = function(r, saved)
             assert(r.body and r.controls and r.handlers.setTile and r.handlers.hit and r.handlers.canPlace,
                 "Hook place/break tidak tersedia. Copy diagnostics dari Settings.")

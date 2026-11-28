@@ -1,5 +1,5 @@
--- Growblox Hansel v0.7.2. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.7.2"
+-- Growblox Hansel v0.7.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.7.3"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -21,7 +21,7 @@ Core.LIMITS = {
     moveTimeout = { 5, 90, 30 }, seedThreshold = { 1, 200, 200 },
     collectRange = { 0.5, 5, 2 },
 }
-Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true, respawnStore = true, fastHarvest = true }
+Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true, respawnStore = true, fastHarvest = true, autoUpdate = true }
 
 local function finite(n)
     return type(n) == "number" and n == n and math.abs(n) < math.huge -- n == n menolak NaN
@@ -1847,8 +1847,17 @@ return function(G)
         local queue, loader = G.queueOnTeleport, G.env.GrowbloxHanselLoaderURL
         if type(queue) ~= "function" or type(loader) ~= "string" or not loader:match("^https://") then return false end
         if not App.queued then
-            queue("getgenv().GrowbloxHanselAutoResume = true; loadstring(game:HttpGet("
-                .. string.format("%q", loader) .. "))()")
+            -- Kode antrean membaca loader TERBARU dari file (ditulis tiap script dimuat / auto update),
+            -- dan cuma jalan sekali walau antrean berisi lebih dari satu (misal setelah update).
+            queue(table.concat({
+                "local e = getgenv()",
+                "if e.GrowbloxHanselQueuedRan then return end",
+                "e.GrowbloxHanselQueuedRan = true",
+                "e.GrowbloxHanselAutoResume = true",
+                "local u = " .. string.format("%q", loader),
+                "pcall(function() if isfile and isfile('GrowbloxHansel/loader-url.txt') then local t = readfile('GrowbloxHansel/loader-url.txt') if type(t) == 'string' and t:match('^https://') then u = t end end end)",
+                "loadstring(game:HttpGet(u))()",
+            }, "; "))
             App.queued = true
         end
         return true
@@ -2756,6 +2765,34 @@ return function(G)
         return token
     end
 
+    -- Jeda task untuk update: simpan checkpoint, hentikan task TANPA menghapus checkpoint, tunggu
+    -- task benar-benar berhenti & request server selesai. Return: mode yang dijeda (nil kalau tidak
+    -- ada task), atau false + alasan kalau task ini tidak bisa dilanjutkan otomatis.
+    function Jobs.suspend(maxWait)
+        local mode = App.job
+        if not mode then return nil end
+        local spec = Jobs.specs[mode]
+        if not (spec and spec.resume and spec.save) then return false, (spec and spec.label or mode) .. " tidak punya checkpoint" end
+        local saved, issue = pcall(spec.save)
+        if not saved then return false, "checkpoint gagal disimpan: " .. tostring(issue) end
+        App.token = App.token + 1
+        App.teleporting, App.recovering = false, false
+        local deadline = os.clock() + (maxWait or 20)
+        while (App.job or App.pending > 0) and os.clock() < deadline do task.wait(0.1) end
+        Movement.releaseControls()
+        Jobs.syncToggles()
+        if App.job or App.pending > 0 then return false, "task belum berhenti" end
+        return mode
+    end
+    -- Lanjutkan checkpoint yang ada (dipakai kalau update batal setelah task dijeda).
+    function Jobs.resumeSaved()
+        for _, handler in ipairs(G.resumeHandlers) do
+            local found, resumed = pcall(handler)
+            if found and resumed then return true end
+        end
+        return false
+    end
+
     -- Stop: token naik, jadi loop task berhenti di checkpoint berikutnya. Checkpoint semua fitur dihapus.
     function Jobs.stop()
         App.token = App.token + 1
@@ -3198,6 +3235,7 @@ return function(G)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
             { "fastHarvest", "Panen cepat (ping tinggi)", "Harvest/Rotation: pohon satu baris dipukul sambil jalan tanpa berhenti di tiap pohon, drop dipungut sambil jalan. Pohon yang gagal otomatis diulang cara biasa. Matikan kalau banyak pohon terlewat." },
+            { "autoUpdate", "Auto update", "Cek patch baru di GitHub tiap 10 menit. Ada versi baru: task yang jalan (Rotation/Harvest/PNB) dijeda dengan checkpoint, script baru dimuat, task dilanjutkan dari titik terakhir. Planting ditunggu sampai selesai." },
             { "respawnStore", "Respawn ke Display Box dekat pintu", "Tas penuh saat Harvest/Rotation dan Display Box ada di dekat pintu putih (maks 8 tile): respawn ke pintu lalu simpan, bukan jalan jauh. Box jauh dari pintu = tetap jalan." },
             { "autoReconnect", "Auto reconnect", "Kena disconnect (layar 'Disconnected' / 'Reconnect'): masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik), lalu task yang punya checkpoint dilanjutkan." },
             { "autoRejoin", "Rejoin world and return to PNB & Harvest", "Keluar ke world picker, avatar mati, atau pindah server: masuk lagi ke world task (PNB: balik ke spot; Harvest: world farm, scan ulang, lanjut panen). Juga lanjut Planting dari checkpoint." },
@@ -3256,10 +3294,21 @@ return function(G)
             "-- sudah dimuat lewat queue_on_teleport / manual? jangan jalan dobel",
             "if getgenv().GrowbloxHanselLoading or getgenv().GrowbloxHanselApp then return end",
             "getgenv().GrowbloxHanselAutoResume = true",
-            "loadstring(game:HttpGet(" .. string.format("%q", main) .. "))()",
+            "local u = " .. string.format("%q", main),
+            "-- loader versi terakhir yang dipakai (ditulis script / auto update), kalau ada",
+            "pcall(function() if isfile and isfile('GrowbloxHansel/loader-url.txt') then local t = readfile('GrowbloxHansel/loader-url.txt') if type(t) == 'string' and t:match('^https://') then u = t end end end)",
+            "loadstring(game:HttpGet(u))()",
         }, "\n")
     end
     function UI.buildAutostart(s)
+        pcall(function() s:Section({ Title = "Update" }) end)
+        s:Button({ Title = "Cek update sekarang", Callback = function()
+            G.task.spawn(function()
+                G.notify("Cek update...")
+                local ok, result = pcall(G.Update.tick, true)
+                G.notify(tostring(ok and result or ("Gagal: " .. tostring(result))))
+            end)
+        end })
         pcall(function() s:Section({ Title = "Auto-start" }) end)
         s:Paragraph({ Title = "Auto-start setelah mental / rejoin",
             Desc = "Kalau setelah keluar ke world picker script tidak jalan sendiri, pasang auto-start: tekan tombol di bawah, "
@@ -4258,6 +4307,7 @@ return function(G)
 
     G.Jobs.register("pnb", {
         label = "Place & Break",
+        save = function() Pnb.saveResume() end,
         prepare = function(r, saved)
             assert(r.body and r.controls and r.handlers.setTile and r.handlers.hit and r.handlers.canPlace,
                 "Hook place/break tidak tersedia. Copy diagnostics dari Settings.")
@@ -4812,6 +4862,7 @@ return function(G)
 
     G.Jobs.register("harvest", {
         label = "Harvest",
+        save = function() Harvest.saveResume() end,
         prepare = function(r)
             assert(r.body and r.controls and r.handlers and type(r.handlers.hit) == "function",
                 "Hook pukul/gerak tidak tersedia. Copy diagnostics dari Settings.")
@@ -5346,6 +5397,7 @@ return function(G)
 
     G.Jobs.register("rotation", {
         label = "Rotation",
+        save = function() Rotation.saveResume() end,
         prepare = function(r)
             assert(r.body and r.controls and r.handlers and type(r.handlers.hit) == "function"
                 and type(r.handlers.setTile) == "function" and type(r.handlers.plantSeed) == "function",
@@ -5429,6 +5481,147 @@ return function(G)
     end
 
     return Rotation
+end
+
+end)()
+
+-- ===== src/update.lua =====
+__modules["update"] = (function(...)
+-- update.lua: auto update saat script jalan.
+-- Tiap 10 menit baca latest.json di GitHub (ditulis build.mjs: versi + path loader permanen).
+-- Ada versi baru -> loader baru di-download & di-compile dulu -> task yang jalan dijeda dengan
+-- checkpoint (Jobs.suspend, checkpoint TIDAK dihapus) -> loader baru dijalankan dengan
+-- AutoResume, jadi script baru menyambung dan melanjutkan task dari titik terakhir.
+-- Gagal di tengah jalan -> versi lama tetap hidup dan task-nya dilanjutkan lagi.
+return function(G)
+    local App, task = G.App, G.task
+    local Update = { INTERVAL = 600, URL_FILE = "GrowbloxHansel/loader-url.txt" }
+    App.update = App.update or { info = "belum dicek" }
+
+    -- "0.7.10" > "0.7.9"
+    function Update.newer(candidate, current)
+        local a, b = {}, {}
+        for n in tostring(candidate):gmatch("%d+") do table.insert(a, tonumber(n)) end
+        for n in tostring(current):gmatch("%d+") do table.insert(b, tonumber(n)) end
+        for i = 1, math.max(#a, #b) do
+            local x, y = a[i] or 0, b[i] or 0
+            if x ~= y then return x > y end
+        end
+        return false
+    end
+
+    -- Folder repo dari URL loader yang sedang dipakai (.../main/releases/loader-xxx.lua -> .../main/).
+    -- Loader yang di-pin ke commit tetap dicek ke branch main supaya patch berikutnya kelihatan.
+    function Update.base()
+        local url = G.env and G.env.GrowbloxHanselLoaderURL
+        if type(url) ~= "string" or not url:match("^https://") then return nil end
+        local root = url:match("^(https://raw%.githubusercontent%.com/[^/]+/[^/]+/)")
+        if root then return root .. "main/" end
+        return (url:gsub("releases/loader%-[%w]+%.lua$", ""))
+    end
+
+    -- Simpan URL loader yang sedang dipakai: dibaca kode queue_on_teleport & script auto-start,
+    -- jadi setelah update, pindah server / masuk ulang memuat versi baru, bukan versi lama.
+    function Update.rememberLoader(url)
+        local fs = G.fs or {}
+        if type(url) ~= "string" or not url:match("^https://") or type(fs.writefile) ~= "function" then return false end
+        return pcall(function()
+            if fs.isfolder and fs.makefolder and not fs.isfolder("GrowbloxHansel") then fs.makefolder("GrowbloxHansel") end
+            fs.writefile(Update.URL_FILE, url)
+        end)
+    end
+
+    function Update.check()
+        local base = assert(Update.base(), "Auto update butuh script yang dimuat dari loader GitHub.")
+        local text = G.httpGet(base .. "latest.json?t=" .. tostring(os.time()))
+        local info = G.json.decode(text)
+        assert(type(info) == "table" and type(info.version) == "string" and type(info.loader) == "string",
+            "latest.json tidak valid.")
+        info.url = base .. info.loader
+        App.update.checked, App.update.latest = os.time(), info.version
+        return info, Update.newer(info.version, G.VERSION)
+    end
+
+    -- Kapan boleh update: tidak sedang pindah world/pulih, dan task yang jalan bisa dilanjutkan.
+    function Update.blocker()
+        if App.configuring then return "sedang menyambung" end
+        if App.teleporting or App.recovering then return "sedang masuk ulang world" end
+        if App.job then
+            local spec = G.Jobs.specs[App.job]
+            if not (spec and spec.resume and spec.save) then return (spec and spec.label or App.job) .. " ditunggu selesai" end
+        end
+        return nil
+    end
+
+    function Update.apply(info)
+        local blocked = Update.blocker()
+        if blocked then return false, blocked end
+        -- 1) download + compile dulu, sebelum menyentuh task
+        local okText, source = pcall(G.httpGet, info.url)
+        if not okText then return false, "download loader gagal: " .. tostring(source) end
+        local chunk, problem = loadstring(source, "Growblox Hansel loader")
+        if not chunk then return false, "loader rusak: " .. tostring(problem) end
+        -- 2) jeda task dengan checkpoint
+        local suspended, why = G.Jobs.suspend(25)
+        if suspended == false then
+            if not App.job then G.Jobs.resumeSaved() end
+            return false, why
+        end
+        -- 3) jalankan versi baru (dia mematikan instance ini sendiri)
+        local env, oldUrl = G.env, G.env.GrowbloxHanselLoaderURL
+        G.setStatus(string.format("Update %s -> %s%s...", G.VERSION, info.version,
+            suspended and (", " .. suspended .. " dilanjutkan setelahnya") or ""))
+        env.GrowbloxHanselAutoResume = suspended and true or nil
+        env.GrowbloxHanselUpdatedFrom = G.VERSION
+        Update.rememberLoader(info.url)
+        local ran, failure = pcall(chunk)
+        if ran then return true end
+        -- gagal: kembalikan versi lama
+        env.GrowbloxHanselAutoResume, env.GrowbloxHanselUpdatedFrom = nil, nil
+        env.GrowbloxHanselLoaderURL = oldUrl
+        env.GrowbloxHanselLoading = nil
+        Update.rememberLoader(oldUrl)
+        if env.GrowbloxHanselApp ~= App then env.GrowbloxHanselApp = App end
+        App.alive = true
+        if suspended then G.Jobs.resumeSaved() end
+        return false, "versi baru gagal dimuat: " .. tostring(failure)
+    end
+
+    -- Satu putaran: cek, kalau ada versi baru coba pasang. Return: teks hasil untuk diagnostics.
+    function Update.tick(force)
+        local okCheck, info, newer = pcall(Update.check)
+        if not okCheck then App.update.info = "cek gagal: " .. tostring(info); return App.update.info end
+        if not newer then App.update.info = "sudah terbaru (" .. G.VERSION .. ")"; return App.update.info end
+        if not force and not App.config.options.autoUpdate then
+            App.update.info = "versi baru " .. info.version .. " tersedia (auto update mati)"
+            return App.update.info
+        end
+        local done, why = Update.apply(info)
+        if done then return "update ke " .. info.version end
+        App.update.info = "versi baru " .. info.version .. " ditunda: " .. tostring(why)
+        return App.update.info
+    end
+
+    function Update.install()
+        Update.rememberLoader(G.env and G.env.GrowbloxHanselLoaderURL)
+        if not Update.base() then App.update.info = "mati (bukan loader GitHub)"; return false end
+        task.spawn(function()
+            task.wait(90)
+            while App.alive do
+                local wait = Update.INTERVAL
+                if App.config.options.autoUpdate then
+                    Update.tick(false)
+                    -- versi baru ada tapi ditunda (misal Planting jalan): coba lagi lebih cepat
+                    if App.alive and App.update.latest and Update.newer(App.update.latest, G.VERSION) then wait = 30 end
+                end
+                local untilAt = os.clock() + wait
+                while App.alive and os.clock() < untilAt do task.wait(1) end
+            end
+        end)
+        return true
+    end
+
+    return Update
 end
 
 end)()
@@ -5541,6 +5734,8 @@ return function(modules, VERSION)
     G.Pnb = modules.pnb(G)
     G.Harvest = modules.harvest(G)
     G.Rotation = modules.rotation(G)
+    G.httpGet = G.httpGet or function(url) return game:HttpGet(url) end
+    G.Update = modules.update(G)
     App.config = G.Core.defaults()
 
     -- resuming = true: script dimuat ulang untuk melanjutkan task (setelah mental / pindah server).
@@ -5627,6 +5822,7 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Auto reconnect: " .. (App.config.options.autoReconnect and "on" or "off") .. "; " .. tostring(App.reconnectInfo or "-"),
+            "Auto update: " .. (App.config.options.autoUpdate and "on" or "off") .. "; " .. tostring(App.update and App.update.info),
             "Panen cepat: " .. (App.config.options.fastHarvest and "on" or "off") .. "; diulang cara biasa " .. tostring(App.fastHarvestRetries or 0) .. " pohon",
             "Respawn ke box: " .. (App.config.options.respawnStore and "on" or "off") .. "; dipakai " .. tostring(App.respawnCount or 0)
                 .. "x; terakhir " .. tostring(App.respawnInfo or "-"),
@@ -5790,6 +5986,12 @@ return function(modules, VERSION)
     if not restored then G.setStatus("Session lama nggak bisa dibaca: " .. tostring(problem)) end
     if App.config.options.antiAFK then G.installAntiAFK() end
     if App.config.options.autoReconnect then G.installReconnect() end
+    pcall(G.Update.install)
+    if env.GrowbloxHanselUpdatedFrom then
+        G.setStatus("Auto update: " .. tostring(env.GrowbloxHanselUpdatedFrom) .. " -> " .. VERSION .. ".")
+        App.update.info = "diupdate dari " .. tostring(env.GrowbloxHanselUpdatedFrom)
+        env.GrowbloxHanselUpdatedFrom = nil
+    end
 
     local function loadWindUI()
         if type(env.GrowbloxHanselWindUI) == "table" then return env.GrowbloxHanselWindUI end

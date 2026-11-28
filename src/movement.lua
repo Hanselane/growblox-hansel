@@ -272,8 +272,17 @@ return function(G)
         local queue, loader = G.queueOnTeleport, G.env.GrowbloxHanselLoaderURL
         if type(queue) ~= "function" or type(loader) ~= "string" or not loader:match("^https://") then return false end
         if not App.queued then
-            queue("getgenv().GrowbloxHanselAutoResume = true; loadstring(game:HttpGet("
-                .. string.format("%q", loader) .. "))()")
+            -- Kode antrean membaca loader TERBARU dari file (ditulis tiap script dimuat / auto update),
+            -- dan cuma jalan sekali walau antrean berisi lebih dari satu (misal setelah update).
+            queue(table.concat({
+                "local e = getgenv()",
+                "if e.GrowbloxHanselQueuedRan then return end",
+                "e.GrowbloxHanselQueuedRan = true",
+                "e.GrowbloxHanselAutoResume = true",
+                "local u = " .. string.format("%q", loader),
+                "pcall(function() if isfile and isfile('GrowbloxHansel/loader-url.txt') then local t = readfile('GrowbloxHansel/loader-url.txt') if type(t) == 'string' and t:match('^https://') then u = t end end end)",
+                "loadstring(game:HttpGet(u))()",
+            }, "; "))
             App.queued = true
         end
         return true

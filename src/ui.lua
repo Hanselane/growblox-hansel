@@ -78,6 +78,7 @@ return function(G)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
             { "fastHarvest", "Panen cepat (ping tinggi)", "Harvest/Rotation: pohon satu baris dipukul sambil jalan tanpa berhenti di tiap pohon, drop dipungut sambil jalan. Pohon yang gagal otomatis diulang cara biasa. Matikan kalau banyak pohon terlewat." },
+            { "autoUpdate", "Auto update", "Cek patch baru di GitHub tiap 10 menit. Ada versi baru: task yang jalan (Rotation/Harvest/PNB) dijeda dengan checkpoint, script baru dimuat, task dilanjutkan dari titik terakhir. Planting ditunggu sampai selesai." },
             { "respawnStore", "Respawn ke Display Box dekat pintu", "Tas penuh saat Harvest/Rotation dan Display Box ada di dekat pintu putih (maks 8 tile): respawn ke pintu lalu simpan, bukan jalan jauh. Box jauh dari pintu = tetap jalan." },
             { "autoReconnect", "Auto reconnect", "Kena disconnect (layar 'Disconnected' / 'Reconnect'): masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik), lalu task yang punya checkpoint dilanjutkan." },
             { "autoRejoin", "Rejoin world and return to PNB & Harvest", "Keluar ke world picker, avatar mati, atau pindah server: masuk lagi ke world task (PNB: balik ke spot; Harvest: world farm, scan ulang, lanjut panen). Juga lanjut Planting dari checkpoint." },
@@ -136,10 +137,21 @@ return function(G)
             "-- sudah dimuat lewat queue_on_teleport / manual? jangan jalan dobel",
             "if getgenv().GrowbloxHanselLoading or getgenv().GrowbloxHanselApp then return end",
             "getgenv().GrowbloxHanselAutoResume = true",
-            "loadstring(game:HttpGet(" .. string.format("%q", main) .. "))()",
+            "local u = " .. string.format("%q", main),
+            "-- loader versi terakhir yang dipakai (ditulis script / auto update), kalau ada",
+            "pcall(function() if isfile and isfile('GrowbloxHansel/loader-url.txt') then local t = readfile('GrowbloxHansel/loader-url.txt') if type(t) == 'string' and t:match('^https://') then u = t end end end)",
+            "loadstring(game:HttpGet(u))()",
         }, "\n")
     end
     function UI.buildAutostart(s)
+        pcall(function() s:Section({ Title = "Update" }) end)
+        s:Button({ Title = "Cek update sekarang", Callback = function()
+            G.task.spawn(function()
+                G.notify("Cek update...")
+                local ok, result = pcall(G.Update.tick, true)
+                G.notify(tostring(ok and result or ("Gagal: " .. tostring(result))))
+            end)
+        end })
         pcall(function() s:Section({ Title = "Auto-start" }) end)
         s:Paragraph({ Title = "Auto-start setelah mental / rejoin",
             Desc = "Kalau setelah keluar ke world picker script tidak jalan sendiri, pasang auto-start: tekan tombol di bawah, "
