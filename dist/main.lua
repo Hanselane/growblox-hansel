@@ -1,5 +1,5 @@
--- Growblox Hansel v0.7.3. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.7.3"
+-- Growblox Hansel v0.7.4. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.7.4"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -21,7 +21,7 @@ Core.LIMITS = {
     moveTimeout = { 5, 90, 30 }, seedThreshold = { 1, 200, 200 },
     collectRange = { 0.5, 5, 2 },
 }
-Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true, respawnStore = true, fastHarvest = true, autoUpdate = true }
+Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true, respawnStore = true, autoUpdate = true }
 
 local function finite(n)
     return type(n) == "number" and n == n and math.abs(n) < math.huge -- n == n menolak NaN
@@ -2311,26 +2311,15 @@ return function(G)
 
     -- Kirim maksimal 8 permintaan pickup sekaligus, lalu tunggu semua balasan.
     -- Tiap drop "dipesan" dulu (drop.taking) supaya pickup bawaan game tidak mengambil yang sama.
-    function Drops.takeBatch(worldName, targets, attempts, retryAt, eligible, token, limit)
-        local jobs = Drops.issueTakes(worldName, targets, attempts, retryAt, eligible, token, limit)
-        local deadline = os.clock() + App.config.options.actionTimeout
-        local results = {}
-        for _, job in ipairs(jobs) do
-            local amount = Net.awaitRequest(job.request, deadline, token)
-            if amount > 0 then attempts[job.uid] = 0 end
-            table.insert(results, { uid = job.uid, id = job.id, amount = amount })
-        end
-        return results
-    end
-    -- Kirim permintaan pickup tanpa menunggu balasan (dipakai juga saat jalan). Return: daftar job.
-    function Drops.issueTakes(worldName, targets, attempts, retryAt, eligible, token, limit)
+    function Drops.takeBatch(worldName, targets, attempts, retryAt, eligible, token)
         local r = worldCheck(worldName, token)
         local take = App.controls and App.controls.takeDrop or r.world.takeDrop
         assert(type(take) == "function" and type(r.world.dropTaken) == "function",
             "The loose-drop pickup hooks are unavailable. Copy diagnostics from Settings.")
         local jobs, reserved = {}, {}
+        local deadline = os.clock() + App.config.options.actionTimeout
         for _, drop in ipairs(targets) do
-            if #jobs >= (limit or 8) then break end
+            if #jobs >= 8 then break end
             worldCheck(worldName, token)
             local present = false
             for _, current in pairs(r.world.dropList()) do if current == drop then present = true; break end end
@@ -2366,68 +2355,13 @@ return function(G)
                 table.insert(jobs, { request = request, uid = uid, id = id })
             end
         end
-        return jobs
-    end
-
-    -- Pungut sambil jalan: step(state) dipanggil tiap langkah dan langsung mengirim pickup untuk drop
-    -- dalam jangkauan (maks 8 sedang jalan) TANPA berhenti menunggu balasan server. finish()
-    -- menunggu semua balasan. pending(area) = masih ada drop cocok di area (belum diambil).
-    function Drops.sweeper(worldName, ids, token)
-        local r = Bridge.runtime()
-        local all, wanted = ids == "all", {}
-        if not all then for _, id in ipairs(ids) do wanted[id] = true end end
-        local jobs, requested, attempts, retryAt = {}, {}, {}, {}
-        local sweep = { taken = 0 }
-        local function matches(drop)
-            return type(drop) == "table" and not drop.display and not drop.pending and type(drop.uid) == "number"
-                and type(drop.n) == "number" and drop.n > 0 and (all or wanted[drop.id])
-                and type(drop.x) == "number" and type(drop.y) == "number"
-                and (drop.id == Drops.GEM or r.inventory:room(drop.id) > 0)
+        local results = {}
+        for _, job in ipairs(jobs) do
+            local amount = Net.awaitRequest(job.request, deadline, token)
+            if amount > 0 then attempts[job.uid] = 0 end
+            table.insert(results, { uid = job.uid, id = job.id, amount = amount })
         end
-        function sweep.step(state)
-            local active = 0
-            for _, job in ipairs(jobs) do if not job.request.done then active = active + 1 end end
-            if active >= 8 then return end
-            local reach, standY = Drops.reach(), math.floor(state.y - 0.01)
-            local function inReach(drop)
-                return matches(drop) and not drop.taking and not requested[drop.uid]
-                    and (drop.readyAt or 0) <= os.clock()
-                    and math.abs(drop.x - state.x) <= reach.radius
-                    and drop.y >= standY - reach.up and drop.y <= standY + reach.down
-            end
-            local targets = {}
-            for _, drop in pairs(r.world.dropList()) do
-                if inReach(drop) then table.insert(targets, drop) end
-            end
-            if #targets == 0 then return end
-            for _, job in ipairs(Drops.issueTakes(worldName, targets, attempts, retryAt, inReach, token, 8 - active)) do
-                requested[job.uid] = true
-                table.insert(jobs, job)
-            end
-        end
-        function sweep.finish()
-            local deadline, any = os.clock() + App.config.options.actionTimeout, false
-            for _, job in ipairs(jobs) do
-                local ok, amount = pcall(Net.awaitRequest, job.request, deadline, token)
-                if not ok then
-                    if type(amount) == "table" or tostring(amount):find("Stopped", 1, true) then error(amount, 0) end
-                elseif amount > 0 then
-                    any, sweep.taken = true, sweep.taken + 1
-                else
-                    requested[job.uid] = nil -- ditolak (kejauhan): boleh dicoba lagi dari dekat
-                end
-            end
-            jobs = {}
-            if any then Actions.refreshInventory(token) end
-        end
-        function sweep.pending(anchor, area)
-            for _, drop in pairs(r.world.dropList()) do
-                if matches(drop) and not drop.taking and math.abs(drop.x - (anchor.x + 0.5)) <= area.radius
-                    and drop.y >= anchor.y - area.up and drop.y <= anchor.y + area.down then return true end
-            end
-            return false
-        end
-        return sweep
+        return results
     end
 
     -- Pungut semua drop dengan id di `ids` dalam kotak di sekitar posisi berdiri `anchor`:
@@ -2454,7 +2388,12 @@ return function(G)
         pause(App.config.options.collectDelay, token)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)
-            Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
+            -- options.lazyInventory (panen per pohon): tidak minta inventory ke server sebelum &
+            -- sesudah pungut (2 round-trip per pohon). Sesudah pungut inventory diminta di latar
+            -- belakang, selesai sendiri selagi karakter jalan ke pohon berikutnya.
+            if not options.lazyInventory then
+                Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
+            end
             -- ids = "all" -> semua item (Auto Collect). options.attempts boleh dibawa antar panggilan
             -- supaya drop yang terus ditolak server (kejauhan) tidak di-spam.
             local attempts, retryAt, deadline = options.attempts or {}, {}, os.clock() + App.config.options.actionTimeout
@@ -2503,7 +2442,17 @@ return function(G)
                         end
                     end
                     if accepted then
-                        Actions.refreshInventory(token)
+                        if options.lazyInventory then
+                            if not App.inventoryRefreshing then
+                                App.inventoryRefreshing = true
+                                Net.beginRequest(function()
+                                    pcall(Actions.refreshInventory, token)
+                                    App.inventoryRefreshing = false
+                                end)
+                            end
+                        else
+                            Actions.refreshInventory(token)
+                        end
                         deadline = os.clock() + App.config.options.actionTimeout
                     end
                 end
@@ -2533,6 +2482,11 @@ return function(G)
     -- Jangkauan pungut server Growblox: bawaan dari Clarissv collectDrops (1.25 tile ke samping,
     -- 1.5 ke atas, 1.25 ke bawah). Kalau server terbukti menerima lebih jauh, pakai jarak itu (maks 5).
     Drops.REACH = { radius = 1.25, up = 1.5, down = 1.25 }
+    -- Jangkauan pungut untuk panen per pohon: tanpa minta inventory tiap pohon (lihat lazyInventory).
+    function Drops.treeReach()
+        local reach = Drops.reach()
+        return { radius = reach.radius, up = reach.up, down = reach.down, lazyInventory = true }
+    end
     function Drops.reach()
         local learned = math.min(5, App.reach.okMax)
         if learned <= Drops.REACH.radius then return Drops.REACH end
@@ -3234,7 +3188,6 @@ return function(G)
         pcall(function() s:Section({ Title = "Settings" }) end)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
-            { "fastHarvest", "Panen cepat (ping tinggi)", "Harvest/Rotation: pohon satu baris dipukul sambil jalan tanpa berhenti di tiap pohon, drop dipungut sambil jalan. Pohon yang gagal otomatis diulang cara biasa. Matikan kalau banyak pohon terlewat." },
             { "autoUpdate", "Auto update", "Cek patch baru di GitHub tiap 10 menit. Ada versi baru: task yang jalan (Rotation/Harvest/PNB) dijeda dengan checkpoint, script baru dimuat, task dilanjutkan dari titik terakhir. Planting ditunggu sampai selesai." },
             { "respawnStore", "Respawn ke Display Box dekat pintu", "Tas penuh saat Harvest/Rotation dan Display Box ada di dekat pintu putih (maks 8 tile): respawn ke pintu lalu simpan, bukan jalan jauh. Box jauh dari pintu = tetap jalan." },
             { "autoReconnect", "Auto reconnect", "Kena disconnect (layar 'Disconnected' / 'Reconnect'): masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik), lalu task yang punya checkpoint dilanjutkan." },
@@ -4665,7 +4618,9 @@ return function(G)
     -- Masuk world, deteksi tanaman + blok hasilnya + Display Box untuk menyimpan (blok & seed).
     -- Dipakai Harvest dan Rotation. Return: { r, seedId, blockId, box, boxProblem } atau nil + alasan.
     -- needBox = false: world tetap dikerjakan walau tidak ada box yang cocok (box = nil).
-    function Harvest.setupWorld(name, token, label, save, needBox)
+    -- knownSeed: tanaman yang sudah diketahui (Rotation lanjut setelah mental, semua pohon sudah
+    -- dipanen jadi world kelihatan kosong) dipakai kalau scan tidak menemukan pohon.
+    function Harvest.setupWorld(name, token, label, save, needBox, knownSeed)
         local r = Bridge.runtime()
         if r.world.name ~= name or Bridge.pickerOpen(r) then
             G.setStatus(label .. ": masuk " .. name .. "...")
@@ -4674,6 +4629,7 @@ return function(G)
         r = worldCheck(name, token)
         G.setStatus(label .. ": scan " .. name .. "...")
         local seedId, trees = Harvest.detectCrop(r)
+        if not seedId and knownSeed and knownSeed > 0 and r.items[knownSeed] then seedId, trees = knownSeed, 0 end
         if not seedId then return nil, "tidak ada pohon" end
         local blockId = Core.blockForSeed(r.items, seedId)
         local found, box = pcall(Storage.findBox, { blockId, seedId })
@@ -4688,93 +4644,6 @@ return function(G)
     end
 
     Harvest.store, Harvest.replant, Harvest.harvestTree, Harvest.duration = store, replant, harvestTree, duration
-
-    ---------------------------------------------------------------- panen cepat (ping tinggi)
-    -- Pohon berurutan di baris yang sama dipanen SAMBIL JALAN: karakter berjalan ke pohon terakhir
-    -- grup tanpa berhenti di tiap pohon; tiap pohon dipukul saat karakter sudah 1 tile darinya
-    -- (tanpa menunggu jawaban server). Di ujung grup: tunggu jawaban server, pohon yang masih ada
-    -- dipanen cara biasa (dikonfirmasi), lalu sisa drop dipungut. Drop yang dilewati terambil oleh
-    -- pickup bawaan game. onTree(point) dipanggil untuk tiap pohon yang terpanen.
-    -- Return: jumlah pohon terpanen.
-    local HIT_RANGE = 1.1
-    function Harvest.harvestPass(r, points, seedId, resolver, token, ids, onTree)
-        local name, total, index = r.world.name, 0, 1
-        while index <= #points do
-            checkpoint(token)
-            -- grup = pohon berurutan di baris yang sama, jarak antar pohon maks 3 tile
-            local group = { points[index] }
-            while points[index + #group] and points[index + #group].y == group[1].y
-                and math.abs(points[index + #group].x - group[#group].x) <= 3
-                and (#group < 2 or (points[index + #group].x - group[#group].x) * (group[#group].x - group[#group - 1].x) > 0) do
-                table.insert(group, points[index + #group])
-            end
-            index = index + #group
-            local live = {}
-            for _, point in ipairs(group) do
-                if tileAt(point.x, point.y) == seedId and resolver.ripe(point.x, point.y, seedId) then table.insert(live, point) end
-            end
-            if #live > 0 then
-                local hit, sweep = {}, Drops.sweeper(name, ids, token)
-                local function strike(state)
-                    sweep.step(state)
-                    for _, point in ipairs(live) do
-                        local key = point.x .. ":" .. point.y
-                        if not hit[key] and math.abs(state.y - (point.y + 1)) < 0.35
-                            and math.abs(state.x - (point.x + 0.5)) <= HIT_RANGE and tileAt(point.x, point.y) == seedId then
-                            r.handlers.hit(point.x, point.y)
-                            hit[key] = true
-                        end
-                    end
-                    return true
-                end
-                -- mulai dari ujung grup yang paling dekat karakter, lalu sapu ke ujung satunya
-                local here = Bridge.position()
-                if math.abs(here.x - (live[1].x + 0.5)) > math.abs(here.x - (live[#live].x + 0.5)) then
-                    local reversed = {}
-                    for i = #live, 1, -1 do table.insert(reversed, live[i]) end
-                    live = reversed
-                end
-                local last = live[#live]
-                Movement.moveTo(live[1].x, live[1].y, name, token, strike)
-                Movement.moveTo(last.x, last.y, name, token, strike)
-                strike(Bridge.position())
-                -- tunggu jawaban server untuk pukulan terakhir (maks ~1,2 detik)
-                for _ = 1, 24 do
-                    local waiting = false
-                    for _, point in ipairs(live) do
-                        if hit[point.x .. ":" .. point.y] and tileAt(point.x, point.y) == seedId then waiting = true; break end
-                    end
-                    if not waiting then break end
-                    pause(0.05, token)
-                end
-                for _, point in ipairs(live) do
-                    local done = tileAt(point.x, point.y) ~= seedId
-                    if done then
-                        App.stats.trees = (App.stats.trees or 0) + 1
-                    else
-                        done = harvestTree(r, point, seedId, resolver, token) -- ditolak / belum kena: cara biasa
-                        App.fastHarvestRetries = (App.fastHarvestRetries or 0) + 1
-                    end
-                    if done then
-                        total = total + 1
-                        if onTree then onTree(point) end
-                    end
-                end
-                local first = live[1]
-                local anchor = { world = name, x = math.floor((first.x + last.x) / 2), y = last.y }
-                local area = { radius = math.abs(last.x - first.x) / 2 + 1.5, up = 1.5, down = 1.25 }
-                -- drop muncul di belakang karakter (ping): sapu balik sambil pungut, tanpa berhenti
-                sweep.step(Bridge.position())
-                if sweep.pending(anchor, area) and first ~= last then
-                    Movement.moveTo(first.x, first.y, name, token, function(state) sweep.step(state); return true end)
-                    sweep.step(Bridge.position())
-                end
-                sweep.finish()
-                if sweep.pending(anchor, area) then Drops.collectArea(anchor, ids, token, area) end
-            end
-        end
-        return total
-    end
 
     ---------------------------------------------------------------- panen satu world
     function Harvest.runWorld(index, token, save)
@@ -4805,17 +4674,6 @@ return function(G)
             local row = entry.row
             G.setStatus(string.format("Harvest %s (%d/%d): baris %d, %d pohon mateng...", name, index,
                 #App.config.harvesting.worlds, row.y, #entry.points))
-            if App.config.options.fastHarvest and not replantOn then
-                -- panen cepat sambil jalan, per potongan 20 pohon (cek tas penuh di antaranya)
-                for start = 1, #entry.points, 20 do
-                    checkpoint(token)
-                    if r.inventory:room(blockId) < 70 or r.inventory:room(seedId) < 30 then store(blockId, seedId, 0, token, box) end
-                    local chunk = {}
-                    for i = start, math.min(#entry.points, start + 19) do table.insert(chunk, entry.points[i]) end
-                    trees = trees + Harvest.harvestPass(r, chunk, seedId, plan.resolver, token, ids)
-                end
-                entry.points = {}
-            end
             for _, point in ipairs(entry.points) do
                 checkpoint(token)
                 -- Tas hampir penuh: simpan dulu ke box world ini, lalu lanjut dari pohon ini.
@@ -4825,7 +4683,7 @@ return function(G)
                 if harvestTree(r, point, seedId, plan.resolver, token) then
                     trees = trees + 1
                     -- Pukul sambil collect: pungut hasil pohon ini dari tempat berdiri sebelum lanjut.
-                    Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, Drops.reach())
+                    Drops.collectNear({ world = name, x = point.x, y = point.y }, ids, token, replantOn and Drops.reach() or Drops.treeReach())
                     if replantOn and replant(r, point, seedId, token) then replanted = replanted + 1 end
                 end
             end
@@ -5202,7 +5060,7 @@ return function(G)
         Rotation.saveResume()
         -- Masuk + scan otomatis: tanaman = seed terbanyak di world, Display Box dicari otomatis.
         local setup, why = timed("masuk & scan world", 1, Harvest.setupWorld, name, token,
-            string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false)
+            string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false, state and state.seedId)
         App.rotationWorlds = App.rotationWorlds or {}
         if not setup then
             App.rotationWorlds[name] = "dilewati: " .. why
@@ -5216,6 +5074,7 @@ return function(G)
         local plan = Harvest.plan(r, seedId)
         if not state then
             state = newState(name, plan) -- KUNCI hasil scan awal
+            state.seedId = seedId
             App.rotationState = state
         else
             info(string.format("Rotasi %s: lanjut dari tahap %s (pohon %d/%d).", name, state.phase, state.cursor, #state.plan))
@@ -5245,44 +5104,22 @@ return function(G)
                     refreshResume()
                     local tree = point(state.plan[state.cursor])
                     seedOverflow(r, box, blockId, seedId, token, nil, nil)
-                    if App.config.options.fastHarvest then
-                        -- panen cepat sambil jalan: ambil beberapa pohon sekaligus, secukupnya untuk
-                        -- mendekati target blok (perkiraan aman 4 blok/pohon supaya tidak kelebihan)
-                        local need = math.max(1, math.ceil((target - count(blockId)) / 4), state.extra or 0)
-                        local chunk = {}
-                        for i = state.cursor, math.min(#state.plan, state.cursor + math.min(12, need) - 1) do
-                            table.insert(chunk, point(state.plan[i]))
-                        end
-                        local ok = soft(token, name, function()
-                            Harvest.harvestPass(r, chunk, seedId, plan.resolver, token, ids, function(done)
-                                table.insert(state.pending, { done.x, done.y })
-                                stats.harvested, got = stats.harvested + 1, got + 1
-                                harvestedNow = harvestedNow + 1
-                                if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
-                            end)
+                    local done = false
+                    local ok = soft(token, name, function()
+                        done = Harvest.harvestTree(r, tree, seedId, plan.resolver, token)
+                    end)
+                    -- sukses / pohon sudah tidak ada -> lanjut; gagal 2x di pohon yang sama -> lewati
+                    state.failed = ok and 0 or (state.failed or 0) + 1
+                    if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + 1, 0 end
+                    if ok and done then
+                        soft(token, name, function()
+                            Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.treeReach())
                         end)
-                        state.failed = ok and 0 or (state.failed or 0) + 1
-                        if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + #chunk, 0 end
-                        refreshInventory(token)
-                        save()
-                    else
-                        local done = false
-                        local ok = soft(token, name, function()
-                            done = Harvest.harvestTree(r, tree, seedId, plan.resolver, token)
-                        end)
-                        -- sukses / pohon sudah tidak ada -> lanjut; gagal 2x di pohon yang sama -> lewati
-                        state.failed = ok and 0 or (state.failed or 0) + 1
-                        if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + 1, 0 end
-                        if ok and done then
-                            soft(token, name, function()
-                                Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.reach())
-                            end)
-                            table.insert(state.pending, { tree.x, tree.y })
-                            stats.harvested, got = stats.harvested + 1, got + 1
-                            harvestedNow = harvestedNow + 1
-                            if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
-                            if got % 10 == 0 then save() end
-                        end
+                        table.insert(state.pending, { tree.x, tree.y })
+                        stats.harvested, got = stats.harvested + 1, got + 1
+                        harvestedNow = harvestedNow + 1
+                        if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
+                        if got % 10 == 0 then save() end
                     end
                 end
                 if #state.pending > 0 then
@@ -5823,7 +5660,6 @@ return function(modules, VERSION)
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Auto reconnect: " .. (App.config.options.autoReconnect and "on" or "off") .. "; " .. tostring(App.reconnectInfo or "-"),
             "Auto update: " .. (App.config.options.autoUpdate and "on" or "off") .. "; " .. tostring(App.update and App.update.info),
-            "Panen cepat: " .. (App.config.options.fastHarvest and "on" or "off") .. "; diulang cara biasa " .. tostring(App.fastHarvestRetries or 0) .. " pohon",
             "Respawn ke box: " .. (App.config.options.respawnStore and "on" or "off") .. "; dipakai " .. tostring(App.respawnCount or 0)
                 .. "x; terakhir " .. tostring(App.respawnInfo or "-"),
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "

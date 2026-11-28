@@ -193,7 +193,6 @@ return function(modules, VERSION)
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Auto reconnect: " .. (App.config.options.autoReconnect and "on" or "off") .. "; " .. tostring(App.reconnectInfo or "-"),
             "Auto update: " .. (App.config.options.autoUpdate and "on" or "off") .. "; " .. tostring(App.update and App.update.info),
-            "Panen cepat: " .. (App.config.options.fastHarvest and "on" or "off") .. "; diulang cara biasa " .. tostring(App.fastHarvestRetries or 0) .. " pohon",
             "Respawn ke box: " .. (App.config.options.respawnStore and "on" or "off") .. "; dipakai " .. tostring(App.respawnCount or 0)
                 .. "x; terakhir " .. tostring(App.respawnInfo or "-"),
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "

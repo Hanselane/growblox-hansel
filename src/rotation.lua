@@ -270,7 +270,7 @@ return function(G)
         Rotation.saveResume()
         -- Masuk + scan otomatis: tanaman = seed terbanyak di world, Display Box dicari otomatis.
         local setup, why = timed("masuk & scan world", 1, Harvest.setupWorld, name, token,
-            string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false)
+            string.format("Rotasi %d/%d", index, #cfg.worlds), Rotation.saveResume, false, state and state.seedId)
         App.rotationWorlds = App.rotationWorlds or {}
         if not setup then
             App.rotationWorlds[name] = "dilewati: " .. why
@@ -284,6 +284,7 @@ return function(G)
         local plan = Harvest.plan(r, seedId)
         if not state then
             state = newState(name, plan) -- KUNCI hasil scan awal
+            state.seedId = seedId
             App.rotationState = state
         else
             info(string.format("Rotasi %s: lanjut dari tahap %s (pohon %d/%d).", name, state.phase, state.cursor, #state.plan))
@@ -313,44 +314,22 @@ return function(G)
                     refreshResume()
                     local tree = point(state.plan[state.cursor])
                     seedOverflow(r, box, blockId, seedId, token, nil, nil)
-                    if App.config.options.fastHarvest then
-                        -- panen cepat sambil jalan: ambil beberapa pohon sekaligus, secukupnya untuk
-                        -- mendekati target blok (perkiraan aman 4 blok/pohon supaya tidak kelebihan)
-                        local need = math.max(1, math.ceil((target - count(blockId)) / 4), state.extra or 0)
-                        local chunk = {}
-                        for i = state.cursor, math.min(#state.plan, state.cursor + math.min(12, need) - 1) do
-                            table.insert(chunk, point(state.plan[i]))
-                        end
-                        local ok = soft(token, name, function()
-                            Harvest.harvestPass(r, chunk, seedId, plan.resolver, token, ids, function(done)
-                                table.insert(state.pending, { done.x, done.y })
-                                stats.harvested, got = stats.harvested + 1, got + 1
-                                harvestedNow = harvestedNow + 1
-                                if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
-                            end)
+                    local done = false
+                    local ok = soft(token, name, function()
+                        done = Harvest.harvestTree(r, tree, seedId, plan.resolver, token)
+                    end)
+                    -- sukses / pohon sudah tidak ada -> lanjut; gagal 2x di pohon yang sama -> lewati
+                    state.failed = ok and 0 or (state.failed or 0) + 1
+                    if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + 1, 0 end
+                    if ok and done then
+                        soft(token, name, function()
+                            Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.treeReach())
                         end)
-                        state.failed = ok and 0 or (state.failed or 0) + 1
-                        if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + #chunk, 0 end
-                        refreshInventory(token)
-                        save()
-                    else
-                        local done = false
-                        local ok = soft(token, name, function()
-                            done = Harvest.harvestTree(r, tree, seedId, plan.resolver, token)
-                        end)
-                        -- sukses / pohon sudah tidak ada -> lanjut; gagal 2x di pohon yang sama -> lewati
-                        state.failed = ok and 0 or (state.failed or 0) + 1
-                        if ok or state.failed >= 2 then state.cursor, state.failed = state.cursor + 1, 0 end
-                        if ok and done then
-                            soft(token, name, function()
-                                Drops.collectNear({ world = name, x = tree.x, y = tree.y }, ids, token, Drops.reach())
-                            end)
-                            table.insert(state.pending, { tree.x, tree.y })
-                            stats.harvested, got = stats.harvested + 1, got + 1
-                            harvestedNow = harvestedNow + 1
-                            if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
-                            if got % 10 == 0 then save() end
-                        end
+                        table.insert(state.pending, { tree.x, tree.y })
+                        stats.harvested, got = stats.harvested + 1, got + 1
+                        harvestedNow = harvestedNow + 1
+                        if count(blockId) >= target then state.extra = math.max(0, (state.extra or 0) - 1) end
+                        if got % 10 == 0 then save() end
                     end
                 end
                 if #state.pending > 0 then

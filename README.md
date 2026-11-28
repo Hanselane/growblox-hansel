@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.7.3**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.7.4**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -273,7 +273,6 @@ Diadaptasi dari tab Settings Claris Growblox v0.1.43. Setting cuma bisa diubah s
 | Setting | Bawaan | Fungsi |
 | --- | --- | --- |
 | **Auto update** | On | Script yang lagi jalan cek `latest.json` di GitHub tiap 10 menit (pertama kali 1,5 menit setelah dimuat). Ada patch baru: loader baru di-download & dicek dulu, lalu Rotation/Harvest/PNB yang jalan dijeda dengan checkpoint, versi baru dimuat dan task dilanjutkan dari titik terakhir. Planting ditunggu sampai selesai. Gagal = versi lama tetap jalan. Pindah server / auto-start setelah update ikut memuat versi baru (`GrowbloxHansel/loader-url.txt`). Tombol **Cek update sekarang** di Settings. Diagnostics: baris `Auto update`. |
-| **Panen cepat (ping tinggi)** | On | Harvest & Rotation: pohon mateng berurutan di satu baris dipukul **sambil jalan** (tidak berhenti di tiap pohon, tidak menunggu balasan server per pukulan), drop dipungut sambil jalan + sapu balik. Pohon yang belum kena otomatis dipanen ulang cara biasa. Simulasi 14 pohon: ping 150 ms 23 → 8 detik, ping 300 ms 35 → 9 detik. Diagnostics: baris `Panen cepat`. |
 | **Respawn ke Display Box dekat pintu** | On | Diadaptasi dari "Respawn to Farm storage" Claris. Saat Harvest menyimpan hasil (tas penuh / selesai) atau Rotation menyimpan seed: kalau Display Box ada maksimal 8 tile dari pintu putih (Main Door) dan karakter lebih dari 10 tile dari box, karakter respawn ke pintu lalu menyimpan, bukan jalan jauh. Diagnostics: baris `Respawn ke box`. |
 | **Auto reconnect** | On | Kena disconnect (layar error 'Disconnected' / 'Reconnect' dari Roblox): script menyiapkan auto-resume lalu masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik). Setelah masuk, task yang punya checkpoint dilanjutkan. Diagnostics: baris `Auto reconnect`. |
 | **Anti-AFK** | On | Saat Roblox mendeteksi idle, script mengirim klik virtual (`VirtualUser`), maksimal sekali per menit, supaya tidak di-kick karena AFK. |

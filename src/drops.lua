@@ -10,26 +10,15 @@ return function(G)
 
     -- Kirim maksimal 8 permintaan pickup sekaligus, lalu tunggu semua balasan.
     -- Tiap drop "dipesan" dulu (drop.taking) supaya pickup bawaan game tidak mengambil yang sama.
-    function Drops.takeBatch(worldName, targets, attempts, retryAt, eligible, token, limit)
-        local jobs = Drops.issueTakes(worldName, targets, attempts, retryAt, eligible, token, limit)
-        local deadline = os.clock() + App.config.options.actionTimeout
-        local results = {}
-        for _, job in ipairs(jobs) do
-            local amount = Net.awaitRequest(job.request, deadline, token)
-            if amount > 0 then attempts[job.uid] = 0 end
-            table.insert(results, { uid = job.uid, id = job.id, amount = amount })
-        end
-        return results
-    end
-    -- Kirim permintaan pickup tanpa menunggu balasan (dipakai juga saat jalan). Return: daftar job.
-    function Drops.issueTakes(worldName, targets, attempts, retryAt, eligible, token, limit)
+    function Drops.takeBatch(worldName, targets, attempts, retryAt, eligible, token)
         local r = worldCheck(worldName, token)
         local take = App.controls and App.controls.takeDrop or r.world.takeDrop
         assert(type(take) == "function" and type(r.world.dropTaken) == "function",
             "The loose-drop pickup hooks are unavailable. Copy diagnostics from Settings.")
         local jobs, reserved = {}, {}
+        local deadline = os.clock() + App.config.options.actionTimeout
         for _, drop in ipairs(targets) do
-            if #jobs >= (limit or 8) then break end
+            if #jobs >= 8 then break end
             worldCheck(worldName, token)
             local present = false
             for _, current in pairs(r.world.dropList()) do if current == drop then present = true; break end end
@@ -65,68 +54,13 @@ return function(G)
                 table.insert(jobs, { request = request, uid = uid, id = id })
             end
         end
-        return jobs
-    end
-
-    -- Pungut sambil jalan: step(state) dipanggil tiap langkah dan langsung mengirim pickup untuk drop
-    -- dalam jangkauan (maks 8 sedang jalan) TANPA berhenti menunggu balasan server. finish()
-    -- menunggu semua balasan. pending(area) = masih ada drop cocok di area (belum diambil).
-    function Drops.sweeper(worldName, ids, token)
-        local r = Bridge.runtime()
-        local all, wanted = ids == "all", {}
-        if not all then for _, id in ipairs(ids) do wanted[id] = true end end
-        local jobs, requested, attempts, retryAt = {}, {}, {}, {}
-        local sweep = { taken = 0 }
-        local function matches(drop)
-            return type(drop) == "table" and not drop.display and not drop.pending and type(drop.uid) == "number"
-                and type(drop.n) == "number" and drop.n > 0 and (all or wanted[drop.id])
-                and type(drop.x) == "number" and type(drop.y) == "number"
-                and (drop.id == Drops.GEM or r.inventory:room(drop.id) > 0)
+        local results = {}
+        for _, job in ipairs(jobs) do
+            local amount = Net.awaitRequest(job.request, deadline, token)
+            if amount > 0 then attempts[job.uid] = 0 end
+            table.insert(results, { uid = job.uid, id = job.id, amount = amount })
         end
-        function sweep.step(state)
-            local active = 0
-            for _, job in ipairs(jobs) do if not job.request.done then active = active + 1 end end
-            if active >= 8 then return end
-            local reach, standY = Drops.reach(), math.floor(state.y - 0.01)
-            local function inReach(drop)
-                return matches(drop) and not drop.taking and not requested[drop.uid]
-                    and (drop.readyAt or 0) <= os.clock()
-                    and math.abs(drop.x - state.x) <= reach.radius
-                    and drop.y >= standY - reach.up and drop.y <= standY + reach.down
-            end
-            local targets = {}
-            for _, drop in pairs(r.world.dropList()) do
-                if inReach(drop) then table.insert(targets, drop) end
-            end
-            if #targets == 0 then return end
-            for _, job in ipairs(Drops.issueTakes(worldName, targets, attempts, retryAt, inReach, token, 8 - active)) do
-                requested[job.uid] = true
-                table.insert(jobs, job)
-            end
-        end
-        function sweep.finish()
-            local deadline, any = os.clock() + App.config.options.actionTimeout, false
-            for _, job in ipairs(jobs) do
-                local ok, amount = pcall(Net.awaitRequest, job.request, deadline, token)
-                if not ok then
-                    if type(amount) == "table" or tostring(amount):find("Stopped", 1, true) then error(amount, 0) end
-                elseif amount > 0 then
-                    any, sweep.taken = true, sweep.taken + 1
-                else
-                    requested[job.uid] = nil -- ditolak (kejauhan): boleh dicoba lagi dari dekat
-                end
-            end
-            jobs = {}
-            if any then Actions.refreshInventory(token) end
-        end
-        function sweep.pending(anchor, area)
-            for _, drop in pairs(r.world.dropList()) do
-                if matches(drop) and not drop.taking and math.abs(drop.x - (anchor.x + 0.5)) <= area.radius
-                    and drop.y >= anchor.y - area.up and drop.y <= anchor.y + area.down then return true end
-            end
-            return false
-        end
-        return sweep
+        return results
     end
 
     -- Pungut semua drop dengan id di `ids` dalam kotak di sekitar posisi berdiri `anchor`:
@@ -153,7 +87,12 @@ return function(G)
         pause(App.config.options.collectDelay, token)
         return Movement.withoutPickups(function()
             local r = worldCheck(anchor.world, token)
-            Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
+            -- options.lazyInventory (panen per pohon): tidak minta inventory ke server sebelum &
+            -- sesudah pungut (2 round-trip per pohon). Sesudah pungut inventory diminta di latar
+            -- belakang, selesai sendiri selagi karakter jalan ke pohon berikutnya.
+            if not options.lazyInventory then
+                Actions.refreshInventory(token) -- selesaikan pickup bawaan game yang masih jalan
+            end
             -- ids = "all" -> semua item (Auto Collect). options.attempts boleh dibawa antar panggilan
             -- supaya drop yang terus ditolak server (kejauhan) tidak di-spam.
             local attempts, retryAt, deadline = options.attempts or {}, {}, os.clock() + App.config.options.actionTimeout
@@ -202,7 +141,17 @@ return function(G)
                         end
                     end
                     if accepted then
-                        Actions.refreshInventory(token)
+                        if options.lazyInventory then
+                            if not App.inventoryRefreshing then
+                                App.inventoryRefreshing = true
+                                Net.beginRequest(function()
+                                    pcall(Actions.refreshInventory, token)
+                                    App.inventoryRefreshing = false
+                                end)
+                            end
+                        else
+                            Actions.refreshInventory(token)
+                        end
                         deadline = os.clock() + App.config.options.actionTimeout
                     end
                 end
@@ -232,6 +181,11 @@ return function(G)
     -- Jangkauan pungut server Growblox: bawaan dari Clarissv collectDrops (1.25 tile ke samping,
     -- 1.5 ke atas, 1.25 ke bawah). Kalau server terbukti menerima lebih jauh, pakai jarak itu (maks 5).
     Drops.REACH = { radius = 1.25, up = 1.5, down = 1.25 }
+    -- Jangkauan pungut untuk panen per pohon: tanpa minta inventory tiap pohon (lihat lazyInventory).
+    function Drops.treeReach()
+        local reach = Drops.reach()
+        return { radius = reach.radius, up = reach.up, down = reach.down, lazyInventory = true }
+    end
     function Drops.reach()
         local learned = math.min(5, App.reach.okMax)
         if learned <= Drops.REACH.radius then return Drops.REACH end

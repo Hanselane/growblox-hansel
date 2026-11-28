@@ -1,5 +1,5 @@
 -- Simulasi kecepatan Harvest dengan ping tinggi. Bukan tes lulus/gagal biasa: mencetak waktu
--- panen 14 pohon di beberapa ping, lalu cek versi cepat tidak lebih lambat & hasilnya sama.
+-- panen 14 pohon di beberapa ping, lalu cek semua pohon terpanen tanpa error.
 local T = dofile("tests/lib.lua")
 local function module(name) return assert(loadfile("src/" .. name .. ".lua"))() end
 local Core, Navigation = module("core"), module("navigation")
@@ -135,20 +135,11 @@ local function setup(options)
     return { G = G, S = S, App = App, world = world, server = server, drops = drops, boxRows = boxRows, avatar = avatar, treeTable = trees }
 end
 
-local function run(ping, fast)
+local function run(ping)
     local ripe = {}
     for x = 1, 14 do ripe[x] = true end
     local sim = setup({ ripe = ripe, ping = ping })
-    sim.App.config.options.fastHarvest = fast
     local started = sim.S.now
-    local H = sim.G.Harvest
-    local profile = { pass = 0, tree = 0, collect = 0, store = 0 }
-    local function wrap(tbl, key, slot)
-        local fn = tbl[key]
-        tbl[key] = function(...) local t0 = sim.S.now; local a, b, c = fn(...); profile[slot] = profile[slot] + sim.S.now - t0; return a, b, c end
-    end
-    wrap(sim.G.Drops, "collectArea", "collect")
-    if os.getenv("PERF_PROFILE") then _G.PROFILE = profile end
     sim.G.Jobs.start("harvest")
     local stop = sim.S.now + 900
     while sim.App.job and sim.S.now < stop do sim.S.run(1, 0.025) end
@@ -156,26 +147,17 @@ local function run(ping, fast)
     local left, blocks = 0, 0
     for x = 1, 14 do if sim.world.fg[8][x] == SEED then left = left + 1 end end
     for _, row in ipairs(sim.boxRows) do if row[1] == BLOCK then blocks = row[2] end end
-    if os.getenv("PERF_PROFILE") then print(string.format("    collectArea %.1f d, retries %s", profile.collect, tostring(sim.App.fastHarvestRetries))) end
     return sim.S.now - started, left, blocks, sim.App.lastError
 end
 
-print("perf.lua (simulasi waktu panen 14 pohon)")
-local results = {}
-for _, ping in ipairs({ 0, 0.15, 0.3 }) do
-    local slow, slowLeft, slowBlocks, slowErr = run(ping, false)
-    local quick, quickLeft, quickBlocks, quickErr = run(ping, true)
-    print(string.format("  ping %3d ms: lama %.1f d (%.2f d/pohon, sisa %d, blok %d%s) | cepat %.1f d (%.2f d/pohon, sisa %d, blok %d%s)",
-        ping * 1000, slow, slow / 14, slowLeft, slowBlocks, slowErr and (", error " .. tostring(slowErr)) or "",
-        quick, quick / 14, quickLeft, quickBlocks, quickErr and (", error " .. tostring(quickErr)) or ""))
-    table.insert(results, { ping = ping, slow = slow, quick = quick, slowLeft = slowLeft, quickLeft = quickLeft, quickBlocks = quickBlocks, quickErr = quickErr })
-end
-for _, result in ipairs(results) do
-    T.test(string.format("ping %d ms: versi cepat memanen semua, tanpa error, tidak lebih lambat", result.ping * 1000), function()
-        T.eq(result.quickErr, nil, tostring(result.quickErr))
-        T.eq(result.quickLeft, 0, "semua pohon dipanen")
-        T.eq(result.quickBlocks, 42, "14 pohon x 3 blok masuk box")
-        T.eq(result.quick <= result.slow + 0.5, true, string.format("cepat %.1f vs lama %.1f", result.quick, result.slow))
+for _, ping in ipairs({ 0, 0.15, 0.3, 0.5 }) do
+    local seconds, left, blocks, err = run(ping)
+    print(string.format("  ping %3d ms: %.1f d (%.2f d/pohon, sisa %d, blok %d%s)", ping * 1000, seconds, seconds / 14,
+        left, blocks, err and (", error " .. tostring(err)) or ""))
+    T.test(string.format("ping %d ms: semua pohon terpanen, tanpa error", ping * 1000), function()
+        T.eq(err, nil)
+        T.eq(left, 0)
+        T.eq(blocks, 42)
     end)
 end
 print(string.format("\n%d lolos, %d gagal", T.passed, T.failed))
