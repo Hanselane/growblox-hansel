@@ -34,7 +34,7 @@ function Core.defaults()
         planting = { seedId = 0, storageWorld = "", worlds = {} },
         harvesting = { method = "fist", seedId = 0, replant = false, worlds = {} },
         -- Rotation: list world farm sendiri (terpisah dari Planting), Display Box per world.
-        rotation = { worlds = {}, seedId = 0, blockTarget = 180, boxes = {} },
+        rotation = { worlds = {}, seedId = 0, blockTarget = 180, boxes = {}, seedLimit = 190, seedStore = 100 },
         -- PNB: tiles = kotak yang di-place & break, relatif ke posisi berdiri (dx kanan, dy bawah).
         pnb = { tiles = { { dx = 0, dy = -1 } }, autoStock = false, autoDrop = false },
     }
@@ -179,6 +179,14 @@ function Core.validate(input)
         if rot.blockTarget ~= nil then
             assert(integer(rot.blockTarget, 1, 200), "Target blok rotasi 1-200.")
             out.rotation.blockTarget = rot.blockTarget
+        end
+        if rot.seedLimit ~= nil then
+            assert(integer(rot.seedLimit, 1, 200), "Batas seed rotasi 1-200.")
+            out.rotation.seedLimit = rot.seedLimit
+        end
+        if rot.seedStore ~= nil then
+            assert(integer(rot.seedStore, 1, 200), "Jumlah seed disimpan 1-200.")
+            out.rotation.seedStore = rot.seedStore
         end
         if rot.boxes ~= nil then
             assert(type(rot.boxes) == "table", "Display Box rotasi rusak.")

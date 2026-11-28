@@ -190,7 +190,7 @@ T.test("Rotation 1 world: harvest 6 blok -> PNB samping -> replant, ulang sampai
     end
     local report = tostring(sim.App.rotationWorlds and sim.App.rotationWorlds.FARM)
     T.eq(report:find("total dipanen 8, PNB 24 blok, ditanam ulang 9", 1, true) or report:find("total dipanen 8, PNB 24 blok, ditanam ulang 17", 1, true) ~= nil, true, report)
-    T.eq(boxCount(sim, "FARM", SEED) > 0, true, "seed sisa masuk box")
+    T.eq(boxCount(sim, "FARM", SEED), 0, "seed TIDAK disimpan di akhir world (cuma saat tas penuh)")
     T.eq(sim.server[BLOCK] or 0, 0, "blok habis di-PNB")
     T.eq(boxCount(sim, "FARM", BLOCK), 0, "blok TIDAK pernah disimpan ke box")
     T.eq(sim.App.phaseTime.PNB.units, 24, "waktu PNB tercatat per blok")
@@ -326,6 +326,73 @@ T.test("World tujuan resume (buat masuk lewat UI picker) dibaca dari checkpoint"
     local target, mode = sim.G.Jobs.resumeTargetWorld()
     sim.S.restore()
     T.eq(target, "FARM2"); T.eq(mode, "rotation")
+end)
+T.test("Seed di tas mencapai batas -> simpan sejumlah seed ke box (bukan replant)", function()
+    local sim = setup()
+    sim.App.config.rotation.seedLimit, sim.App.config.rotation.seedStore = 12, 10
+    sim.G.Jobs.start("rotation")
+    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 1500)
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(boxCount(sim, "FARM", SEED) >= 10, true, "seed masuk box: " .. boxCount(sim, "FARM", SEED))
+    T.eq(boxCount(sim, "FARM", SEED) % 10, 0, "disimpan per 10 seed")
+    T.eq(boxCount(sim, "FARM", BLOCK), 0, "blok tidak disimpan")
+end)
+T.test("Rencana panen dikunci: pohon yang mateng belakangan tidak ikut kunjungan ini", function()
+    local ripe = {}
+    for x = 2, 9 do ripe[x] = true end
+    ripe[11] = false -- masih tumbuh saat scan awal
+    local sim = setup({ ripe = ripe })
+    sim.G.Jobs.start("rotation")
+    sim.S.run(5, 0.025)
+    sim.grids.FARM.trees[8 * 18 + 11] = { p = NOW - 500 } -- pohon x 11 mateng di tengah kunjungan
+    local first
+    runUntil(sim, function()
+        if not first and sim.App.rotationTotals and sim.App.rotationTotals.FARM then first = sim.App.rotationTotals.FARM.harvested end
+        return first ~= nil
+    end, 1500)
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(first, 8, "kunjungan pertama cuma 8 pohon dari scan awal")
+end)
+T.test("Mental saat PNB -> lanjut PNB di spot yang sama, tidak mulai panen dari awal; tidak ada blok sisa", function()
+    local sim = setup()
+    local kicked, afterKick = false, nil
+    sim.G.Jobs.start("rotation")
+    runUntil(sim, function()
+        if not kicked and sim.App.status:find("PNB di", 1, true) then
+            sim.S.run(0.5, 0.025)
+            sim.world.name, kicked = nil, true
+        end
+        if kicked and not afterKick then
+            for i = #sim.App.logs, 1, -1 do
+                if sim.App.logs[i]:find("lanjut dari tahap", 1, true) then afterKick = sim.App.logs[i]; break end
+            end
+        end
+        return (sim.App.rotationLaps or 0) >= 1
+    end, 1500)
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(kicked, true)
+    T.eq(tostring(afterKick):find("lanjut dari tahap pnb", 1, true) ~= nil, true, tostring(afterKick))
+    for x = 0, 17 do T.eq(sim.world.fg[8][x] ~= BLOCK, true, "tidak ada blok sisa di x " .. x) end
+end)
+T.test("Blok sisa PNB di jalur tanam -> dipecah lalu ditanam", function()
+    local sim = setup()
+    sim.world.fg[8][13] = BLOCK -- sisa PNB yang belum dipecah
+    sim.G.Jobs.start("rotation")
+    runUntil(sim, function() return (sim.App.rotationLaps or 0) >= 1 end, 1500)
+    sim.G.Jobs.stop()
+    sim.S.run(2, 0.025)
+    sim.S.restore()
+    T.eq(sim.App.lastError, nil, "tanpa error: " .. tostring(sim.App.lastError))
+    T.eq(sim.world.fg[8][13], SEED, "tile 13 dipecah lalu ditanam")
+    T.eq((sim.App.rotationCleared or 0) >= 1, true)
 end)
 T.test("Resume rotation: lanjut dari world tersimpan", function()
     local sim = setup({ worlds = { "FARM", "FARM2" } })

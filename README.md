@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.7.0**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.7.1**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -242,18 +242,17 @@ Display Box tidak wajib untuk Rotation: kalau di world itu tidak ada box kosong 
 
 Per world, berurutan:
 
-1. Masuk world, scan otomatis (tanaman + Display Box), cek pohon.
-2. **Harvest** pohon yang mateng (zigzag dari atas, pukul sambil collect) sampai blok di tas mencapai target.
-3. **PNB** di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri), sampai blok habis. Kalau di situ tidak ada tile kosong, karakter pindah ke tile bekas panen lain yang sampingnya kosong. Kalau tetap tidak ada, Rotation memanen 2 pohon lagi (walau blok sudah mencapai target) supaya ada tile kosong, lalu PNB.
-4. **Replant**, urutannya:
-   1. lubang (tile kosong yang bisa ditanam) di baris **di atas** posisi sekarang, supaya farm tidak bolong-bolong;
-   2. tile yang barusan dipanen, termasuk tile PNB;
-   3. tile kosong lain di farm yang bisa ditanam.
-   Seed habis = berhenti; sisanya ditanam di putaran berikutnya.
-5. Ulangi 1–4 sampai tidak ada pohon mateng di world itu.
-6. Simpan **seed** sisa ke Display Box world itu (blok tidak pernah disimpan), lalu lanjut ke world berikutnya.
+1. Masuk world, scan otomatis (tanaman + Display Box). Daftar pohon yang mateng saat scan ini **dikunci** sebagai rencana panen kunjungan ini; pohon yang mateng belakangan menunggu kunjungan berikutnya.
+2. **Harvest** pohon dari rencana (zigzag dari atas, pukul sambil collect) sampai blok di tas mencapai target.
+3. **PNB** di tempat berhenti panen: 1 tile kosong di samping (kanan dulu, lalu kiri), sampai blok habis. Tidak ada tile kosong = panen 2 pohon lagi dari rencana supaya ada tempat.
+4. **Replant**: lubang di baris di atas posisi sekarang → tile bekas panen + tile PNB → tile kosong lain di farm. Tile yang masih berisi **blok sisa PNB** dipecah dulu, baru ditanam.
+5. Ulangi 2–4 sampai rencana dari scan awal habis, lalu world berikutnya.
 
-Setelah world terakhir, balik ke world pertama. Kalau satu putaran penuh tidak ada yang dipanen, Rotation menunggu sampai pohon tercepat mateng (maks 10 menit per tunggu) lalu putar lagi. Di tengah putaran, kalau seed di tas hampir penuh: **replant dulu** (urutan yang sama), baru kalau masih penuh kelebihannya (di atas 100) disimpan ke box world itu. Jadi jarang jalan jauh ke box di tengah PNB.
+**Seed penuh**: kalau seed di tas mencapai **Simpan seed kalau di tas mencapai** (150–200, bawaan 190), sejumlah **Jumlah seed yang disimpan** (bawaan 100) disimpan ke Display Box world itu; kalau box dekat pintu putih, karakter respawn dulu. Seed tidak disimpan di akhir world. Tanpa Display Box, seed dipakai replant dulu.
+
+**Lanjut setelah mental**: tahap terakhir (harvest/PNB/replant), posisi di rencana panen, tile bekas panen, dan spot PNB ikut disimpan di checkpoint. Setelah mental / dimuat ulang, rotasi **lanjut dari tahap itu** (misal kembali ke spot PNB dan menghabiskan blok), bukan mulai panen dari awal.
+
+Setelah world terakhir, balik ke world pertama dengan scan baru. Kalau satu putaran penuh tidak ada yang dipanen, Rotation menunggu sampai pohon tercepat mateng (maks 10 menit per tunggu) lalu putar lagi.
 
 ### Kalau error atau berhenti di tengah jalan
 
