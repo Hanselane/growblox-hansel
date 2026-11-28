@@ -54,6 +54,11 @@ return function(G)
     local function store(blockId, seedId, keepSeeds, token, box)
         box = box or App.config.points.farmBox
         refreshInventory(token)
+        if count(blockId) > 0 or count(seedId) - (keepSeeds or 0) > 0 then
+            local used, why = Movement.respawnNear(box, token) -- box dekat pintu putih: respawn, bukan jalan
+            if not used then App.respawnInfo = App.respawnInfo or ("jalan kaki: " .. tostring(why)) end
+            refreshInventory(token)
+        end
         if count(blockId) > 0 then
             G.setStatus("Menyimpan blok hasil panen ke Display Box farm...")
             Storage.deposit(box, blockId, count(blockId), token, nil, seedId)

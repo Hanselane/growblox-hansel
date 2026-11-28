@@ -71,7 +71,9 @@ return function(G)
         refreshInventory(token)
         local amount = count(seedId) - (keep or 0)
         if amount > 0 then
-            info(string.format("Menyimpan %d seed: jalan ke Display Box %s tile %d, %d...", amount, box.world, box.x, box.y))
+            local used = Movement.respawnNear(box, token) -- box dekat pintu putih: respawn, bukan jalan
+            if used then refreshInventory(token); amount = count(seedId) - (keep or 0) end
+            info(string.format("Menyimpan %d seed ke Display Box %s tile %d, %d...", amount, box.world, box.x, box.y))
             G.Storage.deposit(box, seedId, amount, token, nil, blockId)
         end
     end

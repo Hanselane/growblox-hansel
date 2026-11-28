@@ -190,6 +190,8 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Auto reconnect: " .. (App.config.options.autoReconnect and "on" or "off") .. "; " .. tostring(App.reconnectInfo or "-"),
+            "Respawn ke box: " .. (App.config.options.respawnStore and "on" or "off") .. "; dipakai " .. tostring(App.respawnCount or 0)
+                .. "x; terakhir " .. tostring(App.respawnInfo or "-"),
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
                 .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
                 .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),

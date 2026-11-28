@@ -1,5 +1,5 @@
--- Growblox Hansel v0.6.9. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
-local __VERSION = "0.6.9"
+-- Growblox Hansel v0.7.0. File ini HASIL BUILD; edit src/, lalu jalankan: node build.mjs
+local __VERSION = "0.7.0"
 local __modules = {}
 
 -- ===== src/core.lua =====
@@ -21,7 +21,7 @@ Core.LIMITS = {
     moveTimeout = { 5, 90, 30 }, seedThreshold = { 1, 200, 200 },
     collectRange = { 0.5, 5, 2 },
 }
-Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true }
+Core.BOOLS = { antiAFK = true, autoRejoin = true, autoCollect = false, autoReconnect = true, respawnStore = true }
 
 local function finite(n)
     return type(n) == "number" and n == n and math.abs(n) < math.huge -- n == n menolak NaN
@@ -1904,6 +1904,60 @@ return function(G)
     -- Error biasa saat aksi bisa jadi efek keluar world / avatar mati yang belum kelihatan
     -- (classifyPNBFault Clarissv). Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error
     -- "recoverable" supaya task bisa masuk lagi ke world. Dipakai PNB dan Harvest.
+    ---------------------------------------------------------------- respawn ke box dekat pintu
+    -- Adaptasi returnToStorage Clarissv ("Respawn to Farm storage"). Respawn = karakter muncul lagi
+    -- di pintu putih (Main Door). Kalau Display Box dekat pintu itu dan karakter jauh dari box,
+    -- respawn lebih cepat daripada jalan. Dipakai Harvest (tas penuh) dan Rotation (simpan seed).
+    local DOOR_RANGE, WALK_RANGE = 8, 10
+    function Movement.mainDoor(r)
+        for y = 0, r.world.h - 1 do
+            local row = r.world.fg[y]
+            for x = 0, r.world.w - 1 do
+                local id = row and row[x]
+                local item = id and r.items[id]
+                if id == 6 or (item and type(item.name) == "string" and item.name:lower() == "main door") then
+                    return { x = x, y = y }
+                end
+            end
+        end
+    end
+    -- Return: true kalau respawn dipakai, false + alasan kalau tetap jalan kaki.
+    function Movement.respawnNear(box, token)
+        local r = Bridge.runtime()
+        if not App.config.options.respawnStore then return false, "setting Respawn ke box mati" end
+        local respawn = r.respawn or (r.world and r.world.respawn)
+        if type(respawn) ~= "function" then return false, "hook respawn tidak ada" end
+        local door = Movement.mainDoor(r)
+        if not door then return false, "pintu putih (Main Door) tidak ketemu" end
+        local standX, standY = box.standX or box.x, box.standY or box.y
+        local doorGap = math.abs(door.x - standX) + math.abs(door.y - standY)
+        if doorGap > DOOR_RANGE then return false, "box jauh dari pintu (" .. doorGap .. " tile)" end
+        local here = Bridge.position()
+        local walk = math.abs(here.x - (standX + 0.5)) + math.abs(here.y - (standY + 1))
+        if walk <= WALK_RANGE then return false, "sudah dekat box" end
+        Movement.takeControls()
+        local beforeX, beforeY, began = here.x, here.y, os.clock()
+        G.setStatus("Respawn ke pintu (Display Box dekat pintu)...")
+        Net.bounded(respawn, App.config.options.actionTimeout, token)
+        local deadline, moved, stable = os.clock() + math.max(15, App.config.options.actionTimeout), false, nil
+        while true do
+            checkpoint(token)
+            local state = Bridge.avatarState(r)
+            if not state or not state.active or state.dead
+                or math.abs(state.x - beforeX) + math.abs(state.y - beforeY) > 0.5 then moved = true end
+            if moved and state and state.active and not state.dead and state.grounded then
+                stable = stable or os.clock()
+                if os.clock() - stable >= 0.25 then break end
+            else stable = nil end
+            assert(os.clock() < deadline, "Respawn tidak selesai; item tetap di tas.")
+            pause(0.05, token)
+        end
+        Bridge.worldCheck(box.world, token)
+        App.respawnInfo = string.format("%s respawn %.1fd (hemat jalan %d tile)", os.date("%H:%M:%S"), os.clock() - began, math.floor(walk))
+        App.respawnCount = (App.respawnCount or 0) + 1
+        return true
+    end
+
     -- Error apa pun (termasuk "attempt to index nil" karena world/karakter hilang) yang ternyata
     -- akibat keluar world, pindah world, atau avatar mati -> "recoverable". Membaca status game di sini
     -- juga dijaga: kalau gagal dibaca, anggap sedang keluar world (bukan alasan untuk stop).
@@ -3069,6 +3123,7 @@ return function(G)
         pcall(function() s:Section({ Title = "Settings" }) end)
         for _, info in ipairs({
             { "antiAFK", "Anti-AFK", "Jaga sesi tetap aktif saat Roblox mendeteksi idle (klik virtual tiap idle, maks sekali per menit)." },
+            { "respawnStore", "Respawn ke Display Box dekat pintu", "Tas penuh saat Harvest/Rotation dan Display Box ada di dekat pintu putih (maks 8 tile): respawn ke pintu lalu simpan, bukan jalan jauh. Box jauh dari pintu = tetap jalan." },
             { "autoReconnect", "Auto reconnect", "Kena disconnect (layar 'Disconnected' / 'Reconnect'): masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik), lalu task yang punya checkpoint dilanjutkan." },
             { "autoRejoin", "Rejoin world and return to PNB & Harvest", "Keluar ke world picker, avatar mati, atau pindah server: masuk lagi ke world task (PNB: balik ke spot; Harvest: world farm, scan ulang, lanjut panen). Juga lanjut Planting dari checkpoint." },
         }) do
@@ -4401,6 +4456,11 @@ return function(G)
     local function store(blockId, seedId, keepSeeds, token, box)
         box = box or App.config.points.farmBox
         refreshInventory(token)
+        if count(blockId) > 0 or count(seedId) - (keepSeeds or 0) > 0 then
+            local used, why = Movement.respawnNear(box, token) -- box dekat pintu putih: respawn, bukan jalan
+            if not used then App.respawnInfo = App.respawnInfo or ("jalan kaki: " .. tostring(why)) end
+            refreshInventory(token)
+        end
         if count(blockId) > 0 then
             G.setStatus("Menyimpan blok hasil panen ke Display Box farm...")
             Storage.deposit(box, blockId, count(blockId), token, nil, seedId)
@@ -4711,7 +4771,9 @@ return function(G)
         refreshInventory(token)
         local amount = count(seedId) - (keep or 0)
         if amount > 0 then
-            info(string.format("Menyimpan %d seed: jalan ke Display Box %s tile %d, %d...", amount, box.world, box.x, box.y))
+            local used = Movement.respawnNear(box, token) -- box dekat pintu putih: respawn, bukan jalan
+            if used then refreshInventory(token); amount = count(seedId) - (keep or 0) end
+            info(string.format("Menyimpan %d seed ke Display Box %s tile %d, %d...", amount, box.world, box.x, box.y))
             G.Storage.deposit(box, seedId, amount, token, nil, blockId)
         end
     end
@@ -5257,6 +5319,8 @@ return function(modules, VERSION)
             "Job: " .. tostring(App.job or "idle") .. " | Request pending: " .. App.pending,
             "Navigasi: " .. tostring(App.navigationDebug or "-"),
             "Auto reconnect: " .. (App.config.options.autoReconnect and "on" or "off") .. "; " .. tostring(App.reconnectInfo or "-"),
+            "Respawn ke box: " .. (App.config.options.respawnStore and "on" or "off") .. "; dipakai " .. tostring(App.respawnCount or 0)
+                .. "x; terakhir " .. tostring(App.respawnInfo or "-"),
             "Anti-AFK: " .. (App.config.options.antiAFK and "on" or "off") .. "; "
                 .. (App.antiAFKError or (App.idleConnection and "siap" or "belum terpasang"))
                 .. (App.lastIdleInput and string.format("; input terakhir %.0f detik lalu", os.clock() - App.lastIdleInput) or ""),

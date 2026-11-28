@@ -252,6 +252,30 @@ T.test("Harvest 2 world: tiap world tanaman & box dideteksi sendiri", function()
     T.eq(tostring(sim.App.harvestWorlds.FARM2):find("box 2,8", 1, true) ~= nil, true, "box berisi seed dipilih, box asing dilewati")
     T.eq(boxes2["12:8"][1][2], 9, "box berisi item lain tidak disentuh")
 end)
+T.test("Respawn ke box dekat pintu putih: tas penuh & jauh dari box -> respawn, bukan jalan", function()
+    local sim = setup()
+    local r = sim.App.runtime
+    r.items[6] = r.items[6] or { name = "Main Door", solid = false }
+    sim.world.fg[8][14] = 6 -- pintu putih 1 tile dari tempat berdiri box (15,8)
+    local respawned = 0
+    r.respawn = function() respawned = respawned + 1; sim.avatar.x, sim.avatar.vx = 14.5, 0 end
+    sim.avatar.x = 1.5 -- jauh dari box
+    sim.App.job = "harvest" -- respawnNear dipanggil di dalam task
+    local used, why
+    sim.S.task.spawn(function() used, why = sim.G.Movement.respawnNear(sim.App.config.rotation and
+        { world = "FARM", x = 16, y = 8, standX = 15, standY = 8 }, sim.App.token) end)
+    sim.S.run(3, 0.025)
+    -- box jauh dari pintu -> tetap jalan
+    sim.world.fg[8][14] = 0; sim.world.fg[1][2] = 6
+    sim.avatar.x = 1.5
+    local used2, why2
+    sim.S.task.spawn(function() used2, why2 = sim.G.Movement.respawnNear({ world = "FARM", x = 16, y = 8, standX = 15, standY = 8 }, sim.App.token) end)
+    sim.S.run(1, 0.025)
+    sim.S.restore()
+    T.eq(used, true, "respawn dipakai: " .. tostring(why))
+    T.eq(respawned, 1)
+    T.eq(used2, false); T.eq(tostring(why2):find("jauh dari pintu", 1, true) ~= nil, true, tostring(why2))
+end)
 T.test("blockForSeed: seed 41 -> blok 40", function()
     local fake = T.fakeGame()
     T.eq(Core.blockForSeed(fake.items, 41), 40)

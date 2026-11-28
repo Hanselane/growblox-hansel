@@ -337,6 +337,60 @@ return function(G)
     -- Error biasa saat aksi bisa jadi efek keluar world / avatar mati yang belum kelihatan
     -- (classifyPNBFault Clarissv). Tunggu 1,5 detik: kalau ternyata karena itu, ubah jadi error
     -- "recoverable" supaya task bisa masuk lagi ke world. Dipakai PNB dan Harvest.
+    ---------------------------------------------------------------- respawn ke box dekat pintu
+    -- Adaptasi returnToStorage Clarissv ("Respawn to Farm storage"). Respawn = karakter muncul lagi
+    -- di pintu putih (Main Door). Kalau Display Box dekat pintu itu dan karakter jauh dari box,
+    -- respawn lebih cepat daripada jalan. Dipakai Harvest (tas penuh) dan Rotation (simpan seed).
+    local DOOR_RANGE, WALK_RANGE = 8, 10
+    function Movement.mainDoor(r)
+        for y = 0, r.world.h - 1 do
+            local row = r.world.fg[y]
+            for x = 0, r.world.w - 1 do
+                local id = row and row[x]
+                local item = id and r.items[id]
+                if id == 6 or (item and type(item.name) == "string" and item.name:lower() == "main door") then
+                    return { x = x, y = y }
+                end
+            end
+        end
+    end
+    -- Return: true kalau respawn dipakai, false + alasan kalau tetap jalan kaki.
+    function Movement.respawnNear(box, token)
+        local r = Bridge.runtime()
+        if not App.config.options.respawnStore then return false, "setting Respawn ke box mati" end
+        local respawn = r.respawn or (r.world and r.world.respawn)
+        if type(respawn) ~= "function" then return false, "hook respawn tidak ada" end
+        local door = Movement.mainDoor(r)
+        if not door then return false, "pintu putih (Main Door) tidak ketemu" end
+        local standX, standY = box.standX or box.x, box.standY or box.y
+        local doorGap = math.abs(door.x - standX) + math.abs(door.y - standY)
+        if doorGap > DOOR_RANGE then return false, "box jauh dari pintu (" .. doorGap .. " tile)" end
+        local here = Bridge.position()
+        local walk = math.abs(here.x - (standX + 0.5)) + math.abs(here.y - (standY + 1))
+        if walk <= WALK_RANGE then return false, "sudah dekat box" end
+        Movement.takeControls()
+        local beforeX, beforeY, began = here.x, here.y, os.clock()
+        G.setStatus("Respawn ke pintu (Display Box dekat pintu)...")
+        Net.bounded(respawn, App.config.options.actionTimeout, token)
+        local deadline, moved, stable = os.clock() + math.max(15, App.config.options.actionTimeout), false, nil
+        while true do
+            checkpoint(token)
+            local state = Bridge.avatarState(r)
+            if not state or not state.active or state.dead
+                or math.abs(state.x - beforeX) + math.abs(state.y - beforeY) > 0.5 then moved = true end
+            if moved and state and state.active and not state.dead and state.grounded then
+                stable = stable or os.clock()
+                if os.clock() - stable >= 0.25 then break end
+            else stable = nil end
+            assert(os.clock() < deadline, "Respawn tidak selesai; item tetap di tas.")
+            pause(0.05, token)
+        end
+        Bridge.worldCheck(box.world, token)
+        App.respawnInfo = string.format("%s respawn %.1fd (hemat jalan %d tile)", os.date("%H:%M:%S"), os.clock() - began, math.floor(walk))
+        App.respawnCount = (App.respawnCount or 0) + 1
+        return true
+    end
+
     -- Error apa pun (termasuk "attempt to index nil" karena world/karakter hilang) yang ternyata
     -- akibat keluar world, pindah world, atau avatar mati -> "recoverable". Membaca status game di sini
     -- juga dijaga: kalau gagal dibaca, anggap sedang keluar world (bukan alasan untuk stop).

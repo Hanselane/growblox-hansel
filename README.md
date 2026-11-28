@@ -1,6 +1,6 @@
 # Growblox Hansel
 
-Panduan untuk **Growblox Hansel 0.6.9**. *Learn to own.*
+Panduan untuk **Growblox Hansel 0.7.0**. *Learn to own.*
 
 Script autofarm Growblox (Roblox) yang dibangun bertahap. Versi ini berisi pondasi (menyambung ke game, menyimpan setting per akun) fitur **Planting**, dan **Place & Break**. Fitur lain ditambah satu per satu (lihat [Status fitur](#status-fitur)).
 
@@ -273,6 +273,7 @@ Diadaptasi dari tab Settings Claris Growblox v0.1.43. Setting cuma bisa diubah s
 
 | Setting | Bawaan | Fungsi |
 | --- | --- | --- |
+| **Respawn ke Display Box dekat pintu** | On | Diadaptasi dari "Respawn to Farm storage" Claris. Saat Harvest menyimpan hasil (tas penuh / selesai) atau Rotation menyimpan seed: kalau Display Box ada maksimal 8 tile dari pintu putih (Main Door) dan karakter lebih dari 10 tile dari box, karakter respawn ke pintu lalu menyimpan, bukan jalan jauh. Diagnostics: baris `Respawn ke box`. |
 | **Auto reconnect** | On | Kena disconnect (layar error 'Disconnected' / 'Reconnect' dari Roblox): script menyiapkan auto-resume lalu masuk lagi ke Growblox otomatis (maks 5x, jeda 15 detik). Setelah masuk, task yang punya checkpoint dilanjutkan. Diagnostics: baris `Auto reconnect`. |
 | **Anti-AFK** | On | Saat Roblox mendeteksi idle, script mengirim klik virtual (`VirtualUser`), maksimal sekali per menit, supaya tidak di-kick karena AFK. |
 | **Rejoin world and return to PNB & Harvest** | On | Kalau keluar ke world picker, avatar mati, atau pindah server: **PNB** masuk lagi ke world PNB (maks 3 percobaan), jalan balik ke spot, lalu lanjut. **Harvest** masuk lagi ke world farm, scan ulang, lalu lanjut panen. Juga dipakai Planting untuk lanjut dari checkpoint. |
